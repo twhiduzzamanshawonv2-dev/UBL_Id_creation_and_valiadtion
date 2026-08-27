@@ -71,6 +71,13 @@
         📥 Excel Validator
       </button>
     </nav>
+
+    <!-- Admin Auth Status (Admin Dashboard / System Settings require sign-in) -->
+    <div class="auth-status" id="authStatusBox" style="display:none;">
+      <span class="auth-status-icon" aria-hidden="true">🔒</span>
+      <span class="auth-status-email" id="authUserEmail"></span>
+      <button type="button" id="btnLogout" class="btn btn-outline btn-sm">Logout</button>
+    </div>
   </header>
 
   <!-- Main Application Wrapper -->
@@ -364,6 +371,45 @@
         </div>
 
       </form>
+    </section>
+
+    <!-- =========================================================================
+         VIEW: Admin Login (shown instead of Admin Dashboard / System Settings
+         until the visitor signs in with an admin email/password)
+         ========================================================================= -->
+    <section id="view-login" class="view-section">
+      <div class="page-title-box">
+        <h2>Admin Login</h2>
+        <p>Sign in with your admin email and password to access the Admin Dashboard and System Settings.</p>
+      </div>
+
+      <div class="form-grid">
+        <div class="form-card login-card">
+          <div class="card-header-box">
+            <div class="card-step-badge">🔒</div>
+            <h3>Sign In</h3>
+          </div>
+
+          <form id="loginForm" onsubmit="return false;">
+            <div class="field-group mb-3">
+              <label for="loginEmail">Email <span class="req-star">*</span></label>
+              <div class="input-icon-wrap">
+                <svg class="input-icon" aria-hidden="true"><use href="#icon-mail"></use></svg>
+                <input type="email" id="loginEmail" class="form-control" autocomplete="username" aria-required="true" />
+              </div>
+            </div>
+            <div class="field-group mb-3">
+              <label for="loginPassword">Password <span class="req-star">*</span></label>
+              <input type="password" id="loginPassword" class="form-control" autocomplete="current-password" aria-required="true" />
+            </div>
+            <span class="error-message" id="loginError" style="display:block;margin-bottom:0.75rem;"></span>
+            <button type="button" id="btnLoginSubmit" class="btn btn-primary" style="width:100%;">
+              <span class="btn-spinner" aria-hidden="true"></span>
+              <span class="btn-label">🔑 Sign In</span>
+            </button>
+          </form>
+        </div>
+      </div>
     </section>
 
     <!-- =========================================================================

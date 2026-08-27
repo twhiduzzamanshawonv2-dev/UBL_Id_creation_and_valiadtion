@@ -35,6 +35,13 @@ Review all entered fields and photo thumbnails before final submission; Edit to 
 ### 6. Excel (.xlsx) Export
 Exports the currently filtered dataset (queried fresh from Supabase, not the on-screen page) as a `.xlsx` workbook with one sheet per role (BP/Supervisor/FC). Mobile Number is explicitly forced to a Text-formatted column so Excel never drops the leading `0`.
 
+### 7. Admin Login (User Registration & Excel Validator stay public)
+**User Registration** and **Excel Validator** require no login - anyone with the deployed URL can use them. **Admin Dashboard** and **System Settings** require signing in with an admin email/password (Supabase Auth). This is enforced in two layers:
+- **UI**: clicking either admin tab without a session shows the Login screen instead (see `switchTab()` in [js/app.js](js/app.js)).
+- **Database**: the `users` table itself is locked to `authenticated` only (see [supabase/schema.sql](supabase/schema.sql)) - the public Registration form, duplicate-check, and Report To picker go through narrow `SECURITY DEFINER` RPC functions instead of direct table access, so the public anon key can never read full user records, NID numbers, mobile numbers, or photos.
+
+**Creating admin accounts:** there is no self-signup and no in-app "add admin" screen by design - create/remove admin accounts from the **Supabase Dashboard** → *Authentication → Users → Add user* (set "Auto Confirm User" so no email needs to be sent/clicked). Each admin then signs in at the app's Login screen with that email/password. To revoke access, delete or disable the user in the same Dashboard screen - no code changes needed.
+
 ---
 
 ## 📁 File Structure
@@ -57,7 +64,8 @@ Exports the currently filtered dataset (queried fresh from Supabase, not the on-
 
 ## 🚀 How to Run
 
-1. Set up a Supabase project and run [supabase/schema.sql](supabase/schema.sql) against it (see [MIGRATION.md](MIGRATION.md)).
+1. Set up a Supabase project and run [supabase/schema.sql](supabase/schema.sql) against it (see [MIGRATION.md](MIGRATION.md)). Safe to re-run against a project that already has the old (pre-login) schema - it will tighten the RLS policies and add the new RPC functions.
 2. Copy `js/config.example.js` to `js/config.js` and fill in your Supabase Project URL and anon key.
-3. Open `index.html` directly in a browser, or serve the folder with any static file server. No build step, no backend server process required.
-4. To bring over existing Google Sheet data, run the migration script in [migration/](migration/) once (see [MIGRATION.md](MIGRATION.md) for step-by-step instructions).
+3. In the Supabase Dashboard, go to **Authentication → Users → Add user** and create one account per admin (email + password, "Auto Confirm User" checked). This is how you create/manage every Admin Dashboard / System Settings login - see "Admin Login" above.
+4. Open `index.html` directly in a browser, or serve the folder with any static file server. No build step, no backend server process required.
+5. To bring over existing Google Sheet data, run the migration script in [migration/](migration/) once (see [MIGRATION.md](MIGRATION.md) for step-by-step instructions).

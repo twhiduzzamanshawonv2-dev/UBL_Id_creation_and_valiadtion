@@ -17,6 +17,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   };
   let editingUserId = null;
 
+  // Auth state (see initAuth() in Section 0 below). Admin Dashboard / System Settings
+  // require a logged-in Supabase Auth session; User Registration / Excel Validator stay
+  // public. `pendingViewAfterLogin` remembers which admin tab the visitor actually asked
+  // for, so a successful sign-in lands them there instead of always on Admin Dashboard.
+  let currentSession = null;
+  let pendingViewAfterLogin = null;
+
   // Multi-Select instances for the cascading Location fields (assigned in initLocationDropdowns)
   let divisionMS, districtMS, upazilaMS, thanaMS;
 
@@ -85,6 +92,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Same idea, for the Quick Edit modal.
   let currentEditReportToCandidates = [];
 
+  // Resolves any existing Supabase Auth session BEFORE navigation is wired up, so the
+  // very first admin-tab click (if any) is gated correctly.
+  await initAuth();
+
   // Initialize UI components (event wiring only - no server data needed yet)
   initNavigation();
   initFormControls();
@@ -130,6 +141,107 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   /* ==========================================================================
+     0. Admin Authentication (Supabase Auth - email/password)
+     Gates the Admin Dashboard and System Settings tabs only. User Registration
+     and Excel Validator remain fully public - see switchTab() below for the
+     actual gate, and supabase/schema.sql for the matching database-side lock
+     (the users table itself is authenticated-only; the public form/duplicate
+     check/report-to picker go through SECURITY DEFINER RPCs instead).
+     ========================================================================== */
+  function isAuthenticated() {
+    return !!(currentSession && currentSession.user);
+  }
+
+  function updateAuthUI() {
+    const box = document.getElementById('authStatusBox');
+    const emailElem = document.getElementById('authUserEmail');
+    if (!box) return;
+    if (isAuthenticated()) {
+      box.style.display = 'flex';
+      if (emailElem) emailElem.textContent = currentSession.user.email;
+    } else {
+      box.style.display = 'none';
+      if (emailElem) emailElem.textContent = '';
+    }
+  }
+
+  async function handleLoginSubmit() {
+    const btn = document.getElementById('btnLoginSubmit');
+    const emailInput = document.getElementById('loginEmail');
+    const passwordInput = document.getElementById('loginPassword');
+    const errElem = document.getElementById('loginError');
+    if (!btn || !emailInput || !passwordInput || !errElem) return;
+
+    const email = emailInput.value.trim();
+    const password = passwordInput.value;
+    errElem.textContent = '';
+
+    if (!email || !password) {
+      errElem.textContent = 'Please enter both email and password.';
+      return;
+    }
+    if (!window.sb) {
+      errElem.textContent = 'Supabase is not configured yet. Copy js/config.example.js to js/config.js and fill in your project URL/anon key.';
+      return;
+    }
+
+    btn.disabled = true;
+    btn.classList.add('is-loading');
+    const { data, error } = await window.sb.auth.signInWithPassword({ email, password });
+    btn.disabled = false;
+    btn.classList.remove('is-loading');
+
+    if (error) {
+      errElem.textContent = 'Invalid email or password.';
+      return;
+    }
+
+    currentSession = data.session;
+    passwordInput.value = '';
+    updateAuthUI();
+
+    const target = pendingViewAfterLogin || 'admin-management';
+    pendingViewAfterLogin = null;
+    await switchTab(target);
+  }
+
+  async function handleLogout() {
+    if (window.sb) {
+      await window.sb.auth.signOut();
+    }
+    currentSession = null;
+    updateAuthUI();
+    await switchTab('create-user');
+    showToast('Signed out.', 'success');
+  }
+
+  async function initAuth() {
+    const loginForm = document.getElementById('loginForm');
+    const btnLoginSubmit = document.getElementById('btnLoginSubmit');
+    const btnLogout = document.getElementById('btnLogout');
+    const passwordInput = document.getElementById('loginPassword');
+
+    if (loginForm) loginForm.addEventListener('submit', (e) => e.preventDefault());
+    if (btnLoginSubmit) btnLoginSubmit.addEventListener('click', handleLoginSubmit);
+    if (passwordInput) {
+      passwordInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') handleLoginSubmit();
+      });
+    }
+    if (btnLogout) btnLogout.addEventListener('click', handleLogout);
+
+    if (window.sb) {
+      const { data } = await window.sb.auth.getSession();
+      currentSession = data.session;
+      window.sb.auth.onAuthStateChange((_event, session) => {
+        currentSession = session;
+        updateAuthUI();
+      });
+    }
+    updateAuthUI();
+  }
+
+  /* ==========================================================================
      1. Navigation & Tab Control
      ========================================================================== */
   function initNavigation() {
@@ -146,6 +258,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   // (create/update/toggle/reset) that already refreshed the cache, to avoid a redundant
   // network round-trip immediately after the user just triggered one.
   async function switchTab(viewId, options = {}) {
+    // Admin Dashboard / System Settings require a logged-in session - anyone not signed
+    // in gets routed to the Login view instead, and the tab they actually asked for is
+    // remembered (see handleLoginSubmit) so a successful sign-in lands them there.
+    if ((viewId === 'admin-management' || viewId === 'admin-settings') && !isAuthenticated()) {
+      pendingViewAfterLogin = viewId;
+      viewId = 'login';
+    }
+
     // Update nav active buttons
     document.querySelectorAll('.nav-tab').forEach(btn => {
       if (btn.getAttribute('data-view') === viewId) {
@@ -1631,9 +1751,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   // Note: the old "Reset All Data" (hard-wipe-and-reseed) feature was intentionally
-  // removed during the Supabase migration - it required an unauthenticated DELETE
-  // capability, and this app has no login/auth to restrict who could trigger it (the
-  // anon key is public by design). Restore it only alongside real authentication.
+  // removed during the Supabase migration - it required a DELETE capability the schema
+  // never grants (status is toggled instead, see supabase/schema.sql). This view is now
+  // reachable only by logged-in admins (see switchTab()), but the destructive DELETE was
+  // never re-added - if it's wanted, add it deliberately alongside a DB DELETE policy.
   function initSettingsPanel() {}
 
   function renderSettingsLists() {
@@ -1692,14 +1813,13 @@ document.addEventListener('DOMContentLoaded', async () => {
       u.role || '',
       u.reportTo || '',
       u.nid || '',
-      // NID Front/Back live in a PRIVATE Storage bucket - exporting a signed URL into a
-      // spreadsheet would bake in a link that expires and could be forwarded outside the
-      // app, so only presence is noted here (same non-leaking behavior as the old
-      // Base64-placeholder export). User Photo is public/low-sensitivity, so its
-      // permanent public URL is exported directly - genuinely useful, and doesn't expire.
+      // User Photo and NID Front/Back all live in PRIVATE Storage buckets (login required) -
+      // exporting a signed URL into a spreadsheet would bake in a link that expires and
+      // could be forwarded outside the app, so only presence is noted here; view the actual
+      // image in the app's User Details modal instead.
       u.nidFront ? '[On file - view in app]' : 'N/A',
       u.nidBack ? '[On file - view in app]' : 'N/A',
-      u.userPhoto || 'N/A',
+      u.userPhoto ? '[On file - view in app]' : 'N/A',
       u.status || 'Active',
       u.createdDate || ''
     ];

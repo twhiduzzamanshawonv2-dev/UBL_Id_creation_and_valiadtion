@@ -12,5 +12,5 @@
  * migration/.env (used by the one-off Node migration script, never shipped
  * to a browser).
  */
-window.SUPABASE_URL = 'https://vdroepybsoqwgwnjuqoj.supabase.co';
-window.SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZkcm9lcHlic29xd2d3bmp1cW9qIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODcyMjA3NjQsImV4cCI6MjEwMjc5Njc2NH0.rK_O2Vy4DqSfSvFL-Y62ZTHQrD00jPNFIs4oJtkU2tU';
+window.SUPABASE_URL = 'https://xmrfurxceudrsudullei.supabase.co';
+window.SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhtcmZ1cnhjZXVkcnN1ZHVsbGVpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc4MjAyNTcsImV4cCI6MjEwMzM5NjI1N30.V3zx5kCL6Zp1NS-4C2sjA2FIfvOzs3oXVKpFLoOvwpY';

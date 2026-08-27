@@ -159,6 +159,29 @@ a:focus-visible {
   box-shadow: 0 2px 8px rgba(79, 70, 229, 0.5);
 }
 
+/* Admin Auth Status (header) */
+.auth-status {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  color: #e2e8f0;
+  font-size: 0.85rem;
+}
+
+.auth-status-email {
+  font-weight: 600;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Admin Login card */
+.login-card {
+  max-width: 420px;
+  margin: 0 auto;
+}
+
 /* Main Container Layout */
 .main-wrapper {
   max-width: 1320px;

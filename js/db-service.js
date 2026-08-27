@@ -46,13 +46,38 @@ function dbRowToUser(row) {
     nid: row.nid,
     nidFront: row.nid_front_url || '', // storage PATH (private bucket) - resolve via getSignedDocUrls()
     nidBack: row.nid_back_url || '',   // storage PATH (private bucket)
-    userPhoto: row.user_photo_url || '', // already a public URL, ready to use
+    userPhoto: row.user_photo_url || '', // storage PATH (private bucket) - resolve via getSignedDocUrls()
     status: row.status,
     createdBy: row.created_by,
     createdDate: row.created_date,
     updatedBy: row.updated_by,
     updatedDate: row.updated_date
   };
+}
+
+/** Resolves just a user's photo path to a short-lived signed URL (used for admin table avatar thumbnails - requires an authenticated session). */
+async function resolveUserPhoto(user) {
+  if (!user || !user.userPhoto) return user;
+  const sb = requireClient();
+  const { data, error } = await sb.storage
+    .from('user-photos')
+    .createSignedUrl(user.userPhoto, NID_SIGNED_URL_TTL_SECONDS);
+  if (error) {
+    console.error('Failed to create signed URL for user photo:', error);
+    return { ...user, userPhoto: '' };
+  }
+  return { ...user, userPhoto: data.signedUrl };
+}
+
+/** The logged-in admin's email for audit trail fields (updated_by), falling back to a generic label if unavailable for any reason. */
+async function getCurrentAdminIdentity() {
+  try {
+    const sb = requireClient();
+    const { data } = await sb.auth.getUser();
+    return (data && data.user && data.user.email) || 'Admin User';
+  } catch (err) {
+    return 'Admin User';
+  }
 }
 
 function requireClient() {
@@ -102,8 +127,8 @@ function mapDbError(error) {
   if (error.code === '23514') { // check_violation
     return 'One or more fields failed validation (invalid format).';
   }
-  if (msg.includes('report to') || msg.includes('fc users must not') || msg.includes('must be an existing, active')) {
-    return error.message; // these are our own raise exception messages - already user-friendly
+  if (error.code === 'P0001') {
+    return error.message; // a `raise exception` from one of our own functions/triggers - already user-friendly
   }
   return null;
 }
@@ -127,7 +152,8 @@ const dbService = {
     query = query.order('created_date', { ascending: false }).range(from, to);
 
     const { data, error, count } = await run(query, 'Failed to load users.');
-    return { rows: (data || []).map(dbRowToUser), total: count || 0 };
+    const rows = await Promise.all((data || []).map(dbRowToUser).map(resolveUserPhoto));
+    return { rows, total: count || 0 };
   },
 
   /** Fetches every row matching the given filters (no pagination) - used for Excel export. */
@@ -156,7 +182,7 @@ const dbService = {
       sb.from(USERS_VIEW).select('*').eq('user_code', userCode).maybeSingle(),
       'Failed to load user.'
     );
-    return dbRowToUser(data);
+    return resolveUserPhoto(dbRowToUser(data));
   },
 
   /**
@@ -164,61 +190,49 @@ const dbService = {
    * form's Designation is "BP"). Only Active, designation===role rows -
    * mirrors the old validateDesignationRoleReportTo_ hierarchy rule.
    * `excludeUserCode` lets the Edit modal avoid offering a user as their own
-   * Report To. Selects only the columns actually needed - id/name - so this
-   * stays fast even as the table grows.
+   * Report To. Goes through the get_report_to_candidates() SECURITY DEFINER
+   * RPC (see supabase/schema.sql) instead of a direct table select, so this
+   * still works with no login (used by the public Create form) even though
+   * the `users` table itself is locked to authenticated-only.
    */
   async getReportToUsers(targetDesignation, excludeUserCode = null) {
     if (!targetDesignation) return [];
     const sb = requireClient();
-    let query = sb
-      .from('users')
-      .select('user_code, name')
-      .eq('status', 'Active')
-      .eq('designation', targetDesignation)
-      .eq('role', targetDesignation)
-      .order('name', { ascending: true });
-    if (excludeUserCode) query = query.neq('user_code', excludeUserCode);
-
-    const { data } = await run(query, 'Failed to load Report To options.');
-    return (data || []).map(r => ({ id: r.user_code, name: r.name }));
+    const { data } = await run(
+      sb.rpc('get_report_to_candidates', { p_designation: targetDesignation }),
+      'Failed to load Report To options.'
+    );
+    return (data || [])
+      .filter(r => r.user_code !== excludeUserCode)
+      .map(r => ({ id: r.user_code, name: r.name, _pk: r.user_id }));
   },
 
   /**
    * Authoritative duplicate check (mobile/NID), run against the database -
    * not a possibly-stale in-memory cache - right before insert/update, same
-   * as the old findDuplicateUser_ safeguard in Code.gs.
+   * as the old findDuplicateUser_ safeguard in Code.gs. Goes through the
+   * check_duplicate_public() SECURITY DEFINER RPC so it works with no login
+   * (the public Create form uses this) without exposing table SELECT.
    */
   async checkDuplicate(mobile, nid, excludeUserCode = null) {
     const sb = requireClient();
-    const cleanMobile = mobile ? String(mobile).trim() : '';
-    const cleanNid = nid ? String(nid).trim() : '';
-
-    if (cleanMobile) {
-      let q = sb.from('users').select('user_code').eq('mobile', cleanMobile).limit(1);
-      if (excludeUserCode) q = q.neq('user_code', excludeUserCode);
-      const { data } = await run(q, 'Failed to check for duplicates.');
-      if (data && data.length) {
-        return { duplicate: true, field: 'Mobile Number', message: `A user with Mobile Number '${cleanMobile}' already exists.` };
-      }
-    }
-
-    if (cleanNid) {
-      let q = sb.from('users').select('user_code').eq('nid', cleanNid).limit(1);
-      if (excludeUserCode) q = q.neq('user_code', excludeUserCode);
-      const { data } = await run(q, 'Failed to check for duplicates.');
-      if (data && data.length) {
-        return { duplicate: true, field: 'NID Number', message: `A user with NID Number '${cleanNid}' already exists.` };
-      }
-    }
-
-    return { duplicate: false };
+    const { data } = await run(
+      sb.rpc('check_duplicate_public', {
+        p_mobile: mobile || null,
+        p_nid: nid || null,
+        p_exclude_code: excludeUserCode || null
+      }),
+      'Failed to check for duplicates.'
+    );
+    return data || { duplicate: false };
   },
 
   /**
-   * Uploads a File to Supabase Storage. `bucket` is 'user-photos' (public) or
-   * 'nid-documents' (private). Returns the public URL for the public bucket,
-   * or the object PATH (not a URL) for the private bucket - callers must
-   * resolve a path to a signed URL via getSignedDocUrls() before display.
+   * Uploads a File to Supabase Storage. Both `user-photos` and
+   * `nid-documents` are PRIVATE buckets - anon may still INSERT (registration
+   * is public), but reading them back requires an authenticated session, so
+   * this always returns the object PATH (not a URL); callers resolve a path
+   * to a signed URL via getSignedDocUrls()/resolveUserPhoto() on demand.
    */
   async uploadImage(bucket, userCode, fieldName, file) {
     if (!file) return '';
@@ -236,20 +250,16 @@ const dbService = {
       throw new Error(`Failed to upload ${fieldName} - please try again.`);
     }
 
-    if (bucket === 'user-photos') {
-      const { data } = sb.storage.from(bucket).getPublicUrl(path);
-      return data.publicUrl;
-    }
-    return path; // private bucket - store the path, resolve to a signed URL on demand
+    return path;
   },
 
-  /** Resolves a user's private NID document paths to short-lived signed URLs (detail view only). */
+  /** Resolves a user's private NID document paths (and photo) to short-lived signed URLs (detail view only - requires an authenticated session). */
   async getSignedDocUrls(user) {
     const sb = requireClient();
-    const resolve = async (path) => {
+    const resolve = async (bucket, path) => {
       if (!path) return '';
       const { data, error } = await sb.storage
-        .from('nid-documents')
+        .from(bucket)
         .createSignedUrl(path, NID_SIGNED_URL_TTL_SECONDS);
       if (error) {
         console.error('Failed to create signed URL:', error);
@@ -257,8 +267,12 @@ const dbService = {
       }
       return data.signedUrl;
     };
-    const [nidFront, nidBack] = await Promise.all([resolve(user.nidFront), resolve(user.nidBack)]);
-    return { ...user, nidFront, nidBack };
+    const [nidFront, nidBack, userPhoto] = await Promise.all([
+      resolve('nid-documents', user.nidFront),
+      resolve('nid-documents', user.nidBack),
+      resolve('user-photos', user.userPhoto)
+    ]);
+    return { ...user, nidFront, nidBack, userPhoto };
   },
 
   /**
@@ -267,7 +281,10 @@ const dbService = {
    * nidBack } File objects (already validated client-side by validation.js).
    * Mirrors handleAddUser_'s order of operations: duplicate check BEFORE any
    * image upload, so a rejected submission never wastes Storage on images
-   * that end up discarded.
+   * that end up discarded. The actual duplicate check + Report To resolution
+   * + insert happens atomically inside register_user() (a SECURITY DEFINER
+   * RPC - see supabase/schema.sql), since the `users` table itself is locked
+   * to authenticated-only and this form is public/no-login.
    */
   async createUser(userData, files) {
     const sb = requireClient();
@@ -276,22 +293,6 @@ const dbService = {
 
     const dup = await this.checkDuplicate(mobile, nid);
     if (dup.duplicate) throw new Error(dup.message);
-
-    let reportToId = null;
-    const targetDesignation = { BP: 'Supervisor', Supervisor: 'FC' }[userData.designation] || null;
-    if (targetDesignation) {
-      if (!userData.reportTo) throw new Error(`Report To is required and must be a ${targetDesignation}.`);
-      const { data: target } = await run(
-        sb.from('users').select('id').eq('name', userData.reportTo)
-          .eq('designation', targetDesignation).eq('role', targetDesignation).eq('status', 'Active')
-          .maybeSingle(),
-        'Failed to validate Report To.'
-      );
-      if (!target) throw new Error(`Report To must be an existing, active ${targetDesignation}.`);
-      reportToId = target.id;
-    } else if (userData.reportTo) {
-      throw new Error('FC users must not have a Report To.');
-    }
 
     // A temporary code for the image path prefix - the final user_code is
     // assigned by the DB trigger at insert time, but Storage needs a path
@@ -304,35 +305,32 @@ const dbService = {
       this.uploadImage('nid-documents', pathPrefix, 'nidBack', files && files.nidBack)
     ]);
 
-    const row = {
-      name: userData.name,
-      gender: userData.gender,
-      father_name: userData.fatherName,
-      mother_name: userData.motherName,
-      mobile,
-      email: userData.email,
-      dob: userData.dob,
-      division: userData.division || [],
-      district: userData.district || [],
-      upazila: userData.upazila || [],
-      thana: userData.thana || [],
-      designation: userData.designation,
-      role: userData.role,
-      report_to_id: reportToId,
-      nid,
-      nid_front_url: nidFrontPath,
-      nid_back_url: nidBackPath,
-      user_photo_url: userPhotoUrl,
-      status: 'Active',
-      created_by: 'Admin / Self',
-      updated_by: 'Admin / Self'
-    };
-
-    const { data, error } = await run(
-      sb.from('users').insert(row).select().single(),
+    const { data } = await run(
+      sb.rpc('register_user', {
+        p: {
+          name: userData.name,
+          gender: userData.gender,
+          fatherName: userData.fatherName,
+          motherName: userData.motherName,
+          mobile,
+          email: userData.email,
+          dob: userData.dob,
+          division: userData.division || [],
+          district: userData.district || [],
+          upazila: userData.upazila || [],
+          thana: userData.thana || [],
+          designation: userData.designation,
+          role: userData.role,
+          reportTo: userData.reportTo || null,
+          nid,
+          nidFrontUrl: nidFrontPath,
+          nidBackUrl: nidBackPath,
+          userPhotoUrl
+        }
+      }),
       'Failed to create user.'
     );
-    return dbRowToUser({ ...data, report_to_name: userData.reportTo, report_to_code: null });
+    return resolveUserPhoto(dbRowToUser(data));
   },
 
   /**
@@ -363,24 +361,23 @@ const dbService = {
       } else if (!updatedFields.reportTo) {
         throw new Error(`Please select a valid ${targetDesignation} to report to.`);
       } else {
-        const { data: target } = await run(
-          sb.from('users').select('id').eq('name', updatedFields.reportTo)
-            .eq('designation', targetDesignation).eq('role', targetDesignation).eq('status', 'Active')
-            .maybeSingle(),
+        const { data: candidates } = await run(
+          sb.rpc('get_report_to_candidates', { p_designation: targetDesignation }),
           'Failed to validate Report To.'
         );
+        const target = (candidates || []).find(c => c.name === updatedFields.reportTo);
         if (!target) throw new Error(`Please select a valid ${targetDesignation} to report to.`);
-        patch.report_to_id = target.id;
+        patch.report_to_id = target.user_id;
       }
     }
 
-    patch.updated_by = 'Admin User';
+    patch.updated_by = await getCurrentAdminIdentity();
 
     const { data } = await run(
       sb.from('users').update(patch).eq('user_code', userCode).select().single(),
       'Failed to update user.'
     );
-    return dbRowToUser({ ...data, report_to_name: updatedFields.reportTo || null });
+    return resolveUserPhoto(dbRowToUser({ ...data, report_to_name: updatedFields.reportTo || null }));
   },
 
   async toggleUserStatus(userCode) {
@@ -391,7 +388,7 @@ const dbService = {
     );
     const newStatus = current.status === 'Active' ? 'Inactive' : 'Active';
     await run(
-      sb.from('users').update({ status: newStatus, updated_by: 'Admin User' }).eq('user_code', userCode),
+      sb.from('users').update({ status: newStatus, updated_by: await getCurrentAdminIdentity() }).eq('user_code', userCode),
       'Failed to update status.'
     );
     return newStatus;

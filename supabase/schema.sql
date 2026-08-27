@@ -187,88 +187,251 @@ create index if not exists idx_users_designation_status on public.users (designa
 -- ----------------------------------------------------------------------------
 -- Row Level Security
 -- ----------------------------------------------------------------------------
--- The existing app has NO authentication at all (see analysis notes) - anyone
--- with the deployed URL can read/write via the Google Apps Script Web App
--- today. To avoid changing the application's behavior/UX as part of this
--- migration (per the "keep open access like today" decision), these policies
--- allow the `anon` role (i.e. the public anon key used by the frontend) to
--- perform the same operations it could before: read, insert, and update -
--- there is still no hard-delete anywhere in the app (status is toggled
--- instead), so no DELETE policy is granted.
+-- The app has two public surfaces (User Registration, Excel Validator) that
+-- must keep working with no login, and two admin surfaces (Admin Dashboard,
+-- System Settings) that now require a logged-in Supabase Auth session.
 --
--- IMPORTANT: this intentionally keeps the SAME security posture as the old
--- Google Sheets app (open access), not a stronger one. If real authentication
--- is added later, tighten these policies to check auth.uid()/auth.role().
+-- Direct table access is therefore locked to `authenticated` only - the
+-- public registration form, duplicate-check, and Report To picker no longer
+-- read/write this table directly; they go through the SECURITY DEFINER
+-- functions below (register_user / check_duplicate_public /
+-- get_report_to_candidates), which expose only the narrow slice of data each
+-- of those public actions actually needs (no NID numbers, mobile numbers,
+-- photos, or full record listings are ever readable by the anon key).
 alter table public.users enable row level security;
 
 drop policy if exists users_select_anon on public.users;
-create policy users_select_anon on public.users
+drop policy if exists users_insert_anon on public.users;
+drop policy if exists users_update_anon on public.users;
+
+drop policy if exists users_select_authenticated on public.users;
+create policy users_select_authenticated on public.users
   for select
-  to anon, authenticated
+  to authenticated
   using (true);
 
-drop policy if exists users_insert_anon on public.users;
-create policy users_insert_anon on public.users
+drop policy if exists users_insert_authenticated on public.users;
+create policy users_insert_authenticated on public.users
   for insert
-  to anon, authenticated
+  to authenticated
   with check (true);
 
-drop policy if exists users_update_anon on public.users;
-create policy users_update_anon on public.users
+drop policy if exists users_update_authenticated on public.users;
+create policy users_update_authenticated on public.users
   for update
-  to anon, authenticated
+  to authenticated
   using (true)
   with check (true);
 
 -- ----------------------------------------------------------------------------
 -- Storage buckets for NID Front/Back and User Photo (replacing Google Drive).
 -- ----------------------------------------------------------------------------
--- User Photo is low-sensitivity (shown as an avatar throughout the admin
--- table) - kept in a PUBLIC bucket, same effective visibility as the old
--- Drive "anyone with link" file, but scoped to just this bucket.
+-- Both buckets are PRIVATE. Registration (public, no login) still needs to be
+-- able to UPLOAD into them - that stays open to `anon`. Reading the files
+-- back (admin table avatars, User Details modal, signed download links) now
+-- requires a logged-in admin session - the app resolves short-lived signed
+-- URLs on demand (see js/db-service.js getSignedDocUrls()), never a
+-- permanent public link.
+update storage.buckets set public = false where id = 'user-photos';
 insert into storage.buckets (id, name, public)
-values ('user-photos', 'user-photos', true)
+values ('user-photos', 'user-photos', false)
 on conflict (id) do nothing;
 
--- NID Front/Back are sensitive documents - kept in a PRIVATE bucket. The app
--- generates short-lived signed URLs to display them (see js/db-service.js),
--- instead of a permanent public link.
---
--- NOTE / LIMITATION: because this app still has no authentication, the anon
--- key itself (public, embedded in the frontend) is what's allowed to request
--- a signed URL for any object in this bucket - there is no per-user identity
--- to restrict it further. This is still an improvement over the old
--- permanent "anyone with link" Drive URLs (links expire, and files aren't
--- indexable/discoverable via Drive search), but it is NOT equivalent to true
--- per-user access control. Add Supabase Auth + a stricter policy (e.g.
--- restrict to authenticated staff accounts) if that's required later.
 insert into storage.buckets (id, name, public)
 values ('nid-documents', 'nid-documents', false)
 on conflict (id) do nothing;
 
 drop policy if exists user_photos_public_read on storage.objects;
-create policy user_photos_public_read on storage.objects
+drop policy if exists user_photos_anon_upload on storage.objects;
+drop policy if exists nid_documents_anon_select on storage.objects;
+drop policy if exists nid_documents_anon_upload on storage.objects;
+
+drop policy if exists user_photos_authenticated_select on storage.objects;
+create policy user_photos_authenticated_select on storage.objects
   for select
-  to anon, authenticated
+  to authenticated
   using (bucket_id = 'user-photos');
 
-drop policy if exists user_photos_anon_upload on storage.objects;
-create policy user_photos_anon_upload on storage.objects
+drop policy if exists user_photos_upload on storage.objects;
+create policy user_photos_upload on storage.objects
   for insert
   to anon, authenticated
   with check (bucket_id = 'user-photos');
 
-drop policy if exists nid_documents_anon_select on storage.objects;
-create policy nid_documents_anon_select on storage.objects
+drop policy if exists nid_documents_authenticated_select on storage.objects;
+create policy nid_documents_authenticated_select on storage.objects
   for select
-  to anon, authenticated
+  to authenticated
   using (bucket_id = 'nid-documents');
 
-drop policy if exists nid_documents_anon_upload on storage.objects;
-create policy nid_documents_anon_upload on storage.objects
+drop policy if exists nid_documents_upload on storage.objects;
+create policy nid_documents_upload on storage.objects
   for insert
   to anon, authenticated
   with check (bucket_id = 'nid-documents');
+
+-- ----------------------------------------------------------------------------
+-- Public-safe RPC functions
+-- ----------------------------------------------------------------------------
+-- The `users` table itself is now locked to `authenticated` (see RLS above),
+-- but three actions must still work with NO login: submitting the
+-- registration form, checking for a duplicate Mobile/NID before submitting,
+-- and populating the "Report To" picker. Each function below is SECURITY
+-- DEFINER (runs as the table owner, bypassing RLS) but returns/accepts only
+-- the minimum needed for that one action - never full records, NID numbers,
+-- mobile numbers, or photos.
+
+-- Returns whether a Mobile/NID is already in use, without exposing any other
+-- row data. `p_exclude_code` lets the (authenticated-only) admin Edit modal
+-- reuse this same check while editing an existing user.
+create or replace function public.check_duplicate_public(
+  p_mobile text,
+  p_nid text,
+  p_exclude_code text default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  clean_mobile text := nullif(trim(p_mobile), '');
+  clean_nid text := nullif(trim(p_nid), '');
+  hit_code text;
+begin
+  if clean_mobile is not null then
+    select user_code into hit_code from public.users
+      where mobile = clean_mobile and (p_exclude_code is null or user_code <> p_exclude_code)
+      limit 1;
+    if hit_code is not null then
+      return jsonb_build_object(
+        'duplicate', true, 'field', 'Mobile Number',
+        'message', format('A user with Mobile Number ''%s'' already exists.', clean_mobile)
+      );
+    end if;
+  end if;
+
+  if clean_nid is not null then
+    select user_code into hit_code from public.users
+      where nid = clean_nid and (p_exclude_code is null or user_code <> p_exclude_code)
+      limit 1;
+    if hit_code is not null then
+      return jsonb_build_object(
+        'duplicate', true, 'field', 'NID Number',
+        'message', format('A user with NID Number ''%s'' already exists.', clean_nid)
+      );
+    end if;
+  end if;
+
+  return jsonb_build_object('duplicate', false);
+end;
+$$;
+
+grant execute on function public.check_duplicate_public(text, text, text) to anon, authenticated;
+
+-- Report To candidates for a given target designation (Active, matching
+-- designation/role only) - just enough (id/user_code/name) to power the
+-- searchable picker on both the public Create form and the admin Edit modal.
+create or replace function public.get_report_to_candidates(p_designation text)
+returns table (user_id uuid, user_code text, name text)
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select id, user_code, name
+  from public.users
+  where status = 'Active'
+    and designation = p_designation
+    and role = p_designation
+  order by name asc;
+$$;
+
+grant execute on function public.get_report_to_candidates(text) to anon, authenticated;
+
+-- Performs the full public registration write (duplicate check + Report To
+-- resolution + insert) atomically and returns the created row shaped like
+-- `users_with_report_to`, so the anon key never needs direct table access to
+-- register a user or read back the row it just created. Storage uploads
+-- (User Photo/NID images) still happen client-side beforehand (see
+-- db-service.js createUser()) - only their resulting paths are passed in.
+create or replace function public.register_user(p jsonb)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_mobile text := trim(p->>'mobile');
+  v_nid text := trim(p->>'nid');
+  v_designation text := p->>'designation';
+  v_role text := p->>'role';
+  v_report_to_name text := nullif(trim(p->>'reportTo'), '');
+  v_target_designation text;
+  v_report_to_id uuid;
+  v_row public.users%rowtype;
+  v_dup jsonb;
+begin
+  v_dup := public.check_duplicate_public(v_mobile, v_nid, null);
+  if (v_dup->>'duplicate')::boolean then
+    raise exception '%', v_dup->>'message';
+  end if;
+
+  v_target_designation := case v_designation
+    when 'BP' then 'Supervisor'
+    when 'Supervisor' then 'FC'
+    else null
+  end;
+
+  if v_target_designation is not null then
+    if v_report_to_name is null then
+      raise exception 'Report To is required and must be a %.', v_target_designation;
+    end if;
+    select id into v_report_to_id from public.users
+      where name = v_report_to_name
+        and designation = v_target_designation
+        and role = v_target_designation
+        and status = 'Active'
+      limit 1;
+    if v_report_to_id is null then
+      raise exception 'Report To must be an existing, active %.', v_target_designation;
+    end if;
+  elsif v_report_to_name is not null then
+    raise exception 'FC users must not have a Report To.';
+  end if;
+
+  insert into public.users (
+    name, gender, father_name, mother_name, mobile, email, dob,
+    division, district, upazila, thana, designation, role, report_to_id,
+    nid, nid_front_url, nid_back_url, user_photo_url, status, created_by, updated_by
+  ) values (
+    p->>'name', p->>'gender', p->>'fatherName', p->>'motherName', v_mobile, p->>'email',
+    (p->>'dob')::date,
+    coalesce((select array_agg(x) from jsonb_array_elements_text(coalesce(p->'division', '[]'::jsonb)) x), '{}'),
+    coalesce((select array_agg(x) from jsonb_array_elements_text(coalesce(p->'district', '[]'::jsonb)) x), '{}'),
+    coalesce((select array_agg(x) from jsonb_array_elements_text(coalesce(p->'upazila', '[]'::jsonb)) x), '{}'),
+    coalesce((select array_agg(x) from jsonb_array_elements_text(coalesce(p->'thana', '[]'::jsonb)) x), '{}'),
+    v_designation, v_role, v_report_to_id,
+    v_nid, p->>'nidFrontUrl', p->>'nidBackUrl', p->>'userPhotoUrl',
+    'Active', 'Self (Public Registration)', 'Self (Public Registration)'
+  )
+  returning * into v_row;
+
+  return jsonb_build_object(
+    'id', v_row.id, 'user_code', v_row.user_code, 'name', v_row.name, 'gender', v_row.gender,
+    'father_name', v_row.father_name, 'mother_name', v_row.mother_name, 'mobile', v_row.mobile,
+    'email', v_row.email, 'dob', v_row.dob, 'division', v_row.division, 'district', v_row.district,
+    'upazila', v_row.upazila, 'thana', v_row.thana, 'designation', v_row.designation, 'role', v_row.role,
+    'report_to_id', v_row.report_to_id, 'report_to_name', v_report_to_name,
+    'nid', v_row.nid, 'nid_front_url', v_row.nid_front_url, 'nid_back_url', v_row.nid_back_url,
+    'user_photo_url', v_row.user_photo_url, 'status', v_row.status,
+    'created_by', v_row.created_by, 'created_date', v_row.created_date,
+    'updated_by', v_row.updated_by, 'updated_date', v_row.updated_date
+  );
+end;
+$$;
+
+grant execute on function public.register_user(jsonb) to anon, authenticated;
 
 -- ----------------------------------------------------------------------------
 -- Convenience view: users with their Report To person's name pre-joined, so

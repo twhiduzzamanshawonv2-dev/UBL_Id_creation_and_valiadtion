@@ -18,7 +18,9 @@
 
   if (window.supabaseConfigured && window.supabase && window.supabase.createClient) {
     window.sb = window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY, {
-      auth: { persistSession: false } // no login system in this app - nothing to persist
+      // Admin Dashboard / System Settings require a logged-in Supabase Auth session
+      // (see js/app.js initAuth()) - persist it across page reloads/tabs.
+      auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false }
     });
   } else {
     window.sb = null;
