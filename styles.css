@@ -396,6 +396,23 @@ label {
   content: '⚠ ';
 }
 
+/* Smart Email Validation correction/info notes (js/email-validator.js) - distinct from
+   .error-message so a "corrected"/"normalized" note never reads as a red error. */
+.field-correction-message {
+  font-size: 0.8rem;
+  font-weight: 600;
+  min-height: 1.2rem;
+  display: block;
+}
+
+.field-correction-message.is-success {
+  color: var(--success);
+}
+
+.field-correction-message.is-warning {
+  color: var(--warning);
+}
+
 /* Label Leading Icons */
 .label-icon {
   width: 15px;
@@ -1766,6 +1783,11 @@ label {
 .ev-diff-invalid {
   color: var(--danger);
   font-weight: 600;
+}
+
+.ev-diff-warn {
+  color: var(--warning);
+  cursor: help;
 }
 
 .ev-confidence {

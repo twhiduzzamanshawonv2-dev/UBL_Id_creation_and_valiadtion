@@ -82,25 +82,34 @@ function validateNID(nid) {
 }
 
 /**
- * Validate Email Address
- * Requires a local part, an "@", and a domain with at least one dot (e.g., name@example.com).
- * The domain (part after "@") must contain letters and dots only - no digits or special characters.
- * No spaces or stray/invalid characters allowed.
+ * Validate (and smart-correct) an Email Address.
+ * Delegates to the shared Smart Email Validation Engine (js/email-validator.js -
+ * window.smartValidateEmail()) so the Registration form, Excel Validator, and
+ * any future import path all apply the exact same normalization/typo-correction
+ * rules - see that file for the full normalization/typo/confidence logic.
+ *
+ * Kept backward-compatible with every existing caller of validateEmail()
+ * (`.valid`/`.message`/`.cleanValue`), while also exposing the richer
+ * `status`/`corrected`/`suggested`/`confidence` fields for callers that want
+ * to show a "corrected"/"needs review" message (see applySmartEmailValidation()
+ * in js/app.js; row-validator.js calls window.smartValidateEmail() directly).
+ *
+ * `status` is one of: 'valid' | 'corrected' | 'review' | 'invalid'. Only
+ * 'invalid' should block submission - 'review' means the domain couldn't be
+ * confidently guessed (never auto-applied) and is NOT treated as blocking.
  */
 function validateEmail(email) {
-  if (!email) return { valid: false, message: 'Please enter Email.' };
-  const cleanEmail = email.toString().trim();
-
-  if (/\s/.test(cleanEmail)) {
-    return { valid: false, message: 'Email must not contain spaces.' };
-  }
-
-  const emailRegex = /^[^\s@]+@[A-Za-z]+(\.[A-Za-z]+)+$/;
-  if (!emailRegex.test(cleanEmail)) {
-    return { valid: false, message: 'Please enter a valid Email address (e.g., name@example.com). The domain after "@" must contain letters only, no numbers or special characters.' };
-  }
-
-  return { valid: true, cleanValue: cleanEmail };
+  const result = window.smartValidateEmail(email);
+  return {
+    valid: result.status !== 'invalid',
+    cleanValue: result.status === 'invalid' ? undefined : result.corrected,
+    message: result.message,
+    status: result.status,
+    original: result.original,
+    corrected: result.corrected,
+    suggested: result.suggested,
+    confidence: result.confidence
+  };
 }
 
 /**

@@ -265,6 +265,7 @@
                 <input type="email" id="email" class="form-control" placeholder="e.g. example@gmail.com" autocomplete="off" aria-required="true" />
               </div>
               <span class="field-hint">Enter a valid email address (e.g. name@example.com)</span>
+              <span class="field-correction-message" id="emailCorrectionNote"></span>
               <span class="error-message" id="emailError"></span>
             </div>
           </div>
@@ -1266,6 +1267,7 @@
 
   <!-- Application Scripts -->
   <script src="js/bd-locations.js"></script>
+  <script src="js/email-validator.js"></script>
   <script src="js/validation.js"></script>
   <script src="js/multiselect.js"></script>
   <!-- Copy js/config.example.js to js/config.js and fill in your Supabase project URL/anon key -->

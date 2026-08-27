@@ -122,6 +122,49 @@ create trigger trg_touch_updated_date
   before update on public.users
   for each row execute function public.touch_updated_date();
 
+-- Backend/database-level backstop for email normalization (Smart Email
+-- Validation Engine - see js/email-validator.js): register_user() already
+-- inserts a lowercased/trimmed, typo-corrected email, but this trigger makes
+-- lowercase+trim unconditional at the DATABASE level too, so a row can never
+-- end up with an uppercase/untrimmed email regardless of write path (a direct
+-- `sb.from('users').insert()`/`.update()` call, a future bulk-import RPC,
+-- etc.) - "do not trust the frontend" applied to email casing specifically,
+-- matching the same normalize-before-save posture as the RLS/RPC scoping
+-- everywhere else in this file. Does NOT reimplement typo/domain correction
+-- in SQL - that logic stays client-side in the one shared JS engine (see the
+-- file header there) precisely so it's never duplicated.
+create or replace function public.normalize_user_email()
+returns trigger
+language plpgsql
+as $$
+begin
+  if new.email is not null then
+    new.email := lower(trim(new.email));
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_normalize_user_email on public.users;
+create trigger trg_normalize_user_email
+  before insert or update on public.users
+  for each row execute function public.normalize_user_email();
+
+-- Tightened to match the Smart Email Validation Engine's structural rules
+-- (js/email-validator.js) - the original check only rejected a missing "@"/
+-- missing extension; it did NOT reject a local part with a leading/trailing/
+-- consecutive dot (e.g. "rahim..ahmed@gmail.com"), which the JS engine does
+-- reject. ALTER (not part of the original inline `create table` check) so
+-- this stays idempotent on an already-existing table. Added NOT VALID so
+-- re-running this script on a live database can never fail/abort because of
+-- some already-existing row that predates this stricter rule - it only
+-- applies to every NEW insert/update from here on; run `alter table
+-- public.users validate constraint users_email_check` manually later, once
+-- any legacy rows have been cleaned up, if full retroactive enforcement is wanted.
+alter table public.users drop constraint if exists users_email_check;
+alter table public.users add constraint users_email_check
+  check (email ~* '^[a-z0-9]+([._%+-][a-z0-9]+)*@[a-z]+(\.[a-z]+)+$') not valid;
+
 -- Report To hierarchy check, enforced at the database level as a second gate
 -- behind the app's own validation (mirrors validateDesignationRoleReportTo_):
 --   - FC must have report_to_id = NULL.

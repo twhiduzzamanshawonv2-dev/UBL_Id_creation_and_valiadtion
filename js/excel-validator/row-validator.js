@@ -445,10 +445,11 @@
       if (isBlank(mapped.email)) {
         fields.email = { original: mapped.email || '', corrected: '', suggested: null, confidence: 100, status: 'invalid', message: 'Email is empty.', resolution: null };
       } else {
-        const r = window.validateEmail(mapped.email);
-        fields.email = r.valid
-          ? { original: mapped.email, corrected: r.cleanValue, suggested: null, confidence: 100, status: 'valid', message: 'Valid.', resolution: null }
-          : { original: mapped.email, corrected: mapped.email, suggested: null, confidence: 0, status: 'invalid', message: r.message, resolution: null };
+        // Same Smart Email Validation Engine as the Registration form (js/email-validator.js) -
+        // lowercase normalization, Gmail/Yahoo/Hotmail/Outlook typo correction, and fuzzy
+        // domain review all apply identically here, so an uploaded Excel row gets the exact
+        // same corrections a manually-registered user would.
+        fields.email = window.smartValidateEmail(mapped.email);
       }
     }
 

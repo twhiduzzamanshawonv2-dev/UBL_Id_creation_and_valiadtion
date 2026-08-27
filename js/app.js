@@ -462,6 +462,62 @@ document.addEventListener('DOMContentLoaded', async () => {
   /* ==========================================================================
      2. Form Controls & Dropdown Population
      ========================================================================== */
+  // Rewrites an <input>'s value to lowercase in place without losing cursor
+  // position - used for the Email field's "always lowercase, immediately, no
+  // confidence score needed" live normalization (requirement #2/#11). Plain
+  // `input.value = input.value.toLowerCase()` would otherwise snap the caret
+  // to the end of the field on every keystroke.
+  function lowercaseInPlace(input) {
+    const lowered = input.value.toLowerCase();
+    if (lowered === input.value) return;
+    const start = input.selectionStart;
+    const end = input.selectionEnd;
+    input.value = lowered;
+    if (start !== null && end !== null) input.setSelectionRange(start, end);
+  }
+
+  // Runs the shared Smart Email Validation Engine (js/email-validator.js) against
+  // an <input>, rewrites its value to the corrected/normalized form, and shows
+  // the appropriate inline message - shared by validateFieldInline('email')
+  // (blur/paste/submit) so the exact same correction/message logic applies
+  // everywhere the Email field is checked, not just one call site.
+  function applySmartEmailValidation(input, errorElem) {
+    const noteElem = document.getElementById('emailCorrectionNote');
+    if (noteElem) {
+      noteElem.textContent = '';
+      noteElem.classList.remove('is-success', 'is-warning');
+    }
+
+    const result = window.smartValidateEmail(input.value);
+
+    if (result.status === 'invalid') {
+      if (errorElem) errorElem.textContent = result.message;
+      return false;
+    }
+
+    // Unconditional normalization (lowercase always; a >=95%-confidence domain
+    // typo fix for 'corrected'; lowercase-only, domain UNCHANGED for 'review' -
+    // the uncertain fuzzy guess itself is never silently applied) - update the
+    // field itself, not just the message (requirement #18).
+    input.value = result.corrected;
+
+    if (noteElem) {
+      if (result.status === 'corrected') {
+        noteElem.textContent = `✓ ${result.message}`;
+        noteElem.classList.add('is-success');
+      } else if (result.status === 'review') {
+        noteElem.textContent = `⚠ ${result.message}`;
+        noteElem.classList.add('is-warning');
+      } else if (result.warning) {
+        noteElem.textContent = `⚠ ${result.message}`;
+        noteElem.classList.add('is-warning');
+      }
+      // plain 'valid' with no warning: note stays empty, is-valid border is enough.
+    }
+
+    return true;
+  }
+
   function initFormControls() {
     // Name Formatting - Title Case & Strip Special Characters/Numbers on Input/Blur
     ['name', 'fatherName', 'motherName', 'editName'].forEach(fieldId => {
@@ -531,11 +587,19 @@ document.addEventListener('DOMContentLoaded', async () => {
       });
     }
 
-    // Email Inline Validation
+    // Email - Smart Email Validation Engine (js/email-validator.js). Lowercase
+    // normalization is unconditional and cheap, so it happens live on every
+    // keystroke (preserving cursor position - see lowercaseInPlace()) per
+    // requirement #2/#11. Domain typo correction/fuzzy matching only runs on
+    // blur/paste/submit (via validateFieldInline('email'), which now calls the
+    // full smartValidateEmail()) - NOT on every keystroke, so a domain the user
+    // hasn't finished typing yet (e.g. "gmail.co" on the way to "gmail.com")
+    // never gets rewritten out from under them mid-type.
     const emailInput = document.getElementById('email');
     if (emailInput) {
-      emailInput.addEventListener('input', () => validateFieldInline('email'));
+      emailInput.addEventListener('input', () => lowercaseInPlace(emailInput));
       emailInput.addEventListener('blur', () => validateFieldInline('email'));
+      emailInput.addEventListener('paste', () => setTimeout(() => validateFieldInline('email'), 0));
     }
 
     // Gender Inline Validation
@@ -1196,6 +1260,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     const visualTarget = getVisualTarget(fieldId, input);
     errorElem.textContent = '';
 
+    if (fieldId === 'email') {
+      const noteElem = document.getElementById('emailCorrectionNote');
+      if (noteElem) {
+        noteElem.textContent = '';
+        noteElem.classList.remove('is-success', 'is-warning');
+      }
+    }
+
     // Report To's required-ness depends on Designation: required for BP/Supervisor, but an
     // FC must have it EMPTY (FC is the top of the hierarchy - reports to nobody).
     if (fieldId === 'reportTo') {
@@ -1249,9 +1321,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     if (fieldId === 'email' && input.value) {
-      const v = validateEmail(input.value);
-      if (!v.valid) {
-        errorElem.textContent = v.message;
+      if (!applySmartEmailValidation(input, errorElem)) {
         markFieldValidity(visualTarget, false);
         return false;
       }
@@ -1284,6 +1354,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     const clearErrors = () => {
       document.querySelectorAll('.error-message').forEach(el => el.textContent = '');
+      document.querySelectorAll('.field-correction-message').forEach(el => {
+        el.textContent = '';
+        el.classList.remove('is-success', 'is-warning');
+      });
       const warningBanner = document.getElementById('duplicateWarningBanner');
       if (warningBanner) warningBanner.style.display = 'none';
     };

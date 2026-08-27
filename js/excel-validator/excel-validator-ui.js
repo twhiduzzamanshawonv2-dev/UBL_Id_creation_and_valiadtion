@@ -369,7 +369,13 @@ document.addEventListener('DOMContentLoaded', () => {
     const orig = escapeHtml(displayValue(fieldResult.original));
 
     if (fieldResult.status === 'valid') {
-      return `<span>${orig || '<span class="text-muted">—</span>'}</span>`;
+      // A syntactically valid but unusual-looking value (currently only the Smart Email
+      // Validation Engine sets this - see js/email-validator.js) stays 'valid' (never
+      // blocked, never auto-changed) but still surfaces its warning as a hover tooltip.
+      const warn = fieldResult.warning
+        ? ` <span class="ev-diff-warn" title="${escapeHtml(fieldResult.message || '')}">⚠</span>`
+        : '';
+      return `<span>${orig || '<span class="text-muted">—</span>'}</span>${warn}`;
     }
     if (fieldResult.status === 'invalid') {
       return `<span class="ev-diff ev-diff-invalid" title="${escapeHtml(fieldResult.message || '')}">${orig || '<em>empty</em>'}</span>`;
