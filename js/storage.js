@@ -206,6 +206,14 @@ class StorageManager {
     return dbService.getDashboardCounts(filters);
   }
 
+  async fetchRecentUsers(filters = {}, limit = 5) {
+    return dbService.getRecentUsers(filters, limit);
+  }
+
+  async fetchUserCount(filters = {}) {
+    return dbService.getUserCount(filters);
+  }
+
   /**
    * Resolves and caches the current session's account scope. No profile row
    * in the database = legacy Super Admin (mirrors the exact same bootstrap

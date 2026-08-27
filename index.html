@@ -684,6 +684,22 @@
           <div class="kpi-label">Active Campaigns</div>
         </div>
       </div>
+
+      <div class="dashboard-card">
+        <div class="filter-bar-header">
+          <h4>Recent Users</h4>
+        </div>
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
+              <tr><th>User ID</th><th>Name</th><th>Designation</th><th>Status</th><th>Created Date</th></tr>
+            </thead>
+            <tbody id="dashboardRecentUsersBody">
+              <!-- Dynamically Populated -->
+            </tbody>
+          </table>
+        </div>
+      </div>
     </section>
 
     <!-- =========================================================================
@@ -838,7 +854,8 @@
             </div>
           </div>
 
-          <div class="form-actions-bar">
+          <div class="form-actions-bar" style="justify-content: space-between;">
+            <span id="exportUserCountPreview" class="text-muted">Users Found: —</span>
             <button type="button" id="btnConfirmExport" class="btn btn-success">
               <span class="btn-spinner" aria-hidden="true"></span>
               <span class="btn-label">📊 Export Excel</span>

@@ -187,6 +187,21 @@ const dbService = {
     return { rows, total: count || 0 };
   },
 
+  /**
+   * Count-only (head:true - never fetches rows) of users matching the given
+   * filters - powers the Export view's "Users Found" live preview, which
+   * MUST use the exact same filter set (agencyId/campaignId/role/fromDate/
+   * toDate via applyFilters()) as getAllUsersForExport() below, so the
+   * preview number always matches what the export will actually contain.
+   */
+  async getUserCount(opts = {}) {
+    const sb = requireClient();
+    let query = sb.from(USERS_VIEW).select('*', { count: 'exact', head: true });
+    query = applyFilters(query, opts);
+    const { count } = await run(query, 'Failed to load user count.');
+    return count || 0;
+  },
+
   /** Fetches every row matching the given filters (no pagination) - used for Excel export. */
   async getAllUsersForExport(opts = {}) {
     const sb = requireClient();
@@ -553,17 +568,44 @@ const dbService = {
       run(countQuery({ role: 'FC' }), 'Failed to load Total FC count.')
     ]);
 
-    let campaignsQuery = sb.from('campaigns').select('*', { count: 'exact', head: true }).eq('status', 'Active');
-    if (opts.agencyId) campaignsQuery = campaignsQuery.eq('agency_id', opts.agencyId);
-    const campaignsRes = await run(campaignsQuery, 'Failed to load Active Campaigns count.');
+    // Goes through the get_active_campaigns_count() SECURITY DEFINER RPC (see
+    // supabase/schema.sql) rather than a bare `count(*) from campaigns` -
+    // `campaigns` SELECT is open to any authenticated account (low-sensitivity
+    // master data), so a direct client-side count would leak the GLOBAL
+    // active-campaign total to a scoped account instead of just its own
+    // Agency. For a non-Super-Admin caller the RPC ignores opts.agencyId/
+    // opts.campaignId and resolves the caller's own Agency server-side
+    // instead (this KPI is deliberately Agency-WIDE, counting every active
+    // Campaign under that Agency, not just the caller's own single Campaign -
+    // every other count/list/export in this system stays Agency+Campaign
+    // scoped, only this one tile is Agency-only). Client args are only
+    // honored for Super Admin.
+    const campaignsRes = await run(
+      sb.rpc('get_active_campaigns_count', { p_agency_id: opts.agencyId || null, p_campaign_id: opts.campaignId || null }),
+      'Failed to load Active Campaigns count.'
+    );
 
     return {
       totalUsers: totalRes.count || 0,
       totalBP: bpRes.count || 0,
       totalSupervisor: supRes.count || 0,
       totalFC: fcRes.count || 0,
-      activeCampaigns: campaignsRes.count || 0
+      activeCampaigns: Number(campaignsRes.data) || 0
     };
+  },
+
+  /**
+   * Most recently created users, scoped by the same Agency/Campaign filters
+   * (and, for a non-Super-Admin caller, the same RLS-enforced tenant scope)
+   * as every other dashboard/list query - see applyFilters()/USERS_VIEW.
+   */
+  async getRecentUsers(opts = {}, limit = 5) {
+    const sb = requireClient();
+    let query = sb.from(USERS_VIEW).select('*');
+    query = applyFilters(query, opts);
+    query = query.order('created_date', { ascending: false }).limit(limit);
+    const { data } = await run(query, 'Failed to load Recent Users.');
+    return (data || []).map(dbRowToUser);
   },
 
   /**

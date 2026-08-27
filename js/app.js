@@ -455,6 +455,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       renderCampaignLoginsList();
     } else if (viewId === 'export') {
       populateExportFilters();
+      refreshExportUserCount();
     }
   }
 
@@ -1829,6 +1830,19 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Renders whatever page of results is currently cached in storage.users (already
   // filtered/paginated server-side by the last reloadUserTable() call) plus the
   // pagination bar. Does NOT itself query Supabase - see reloadUserTable() for that.
+  // A scoped (non-Super-Admin) account that sees zero rows almost always means
+  // its Campaign Login account_profiles row is linked to the wrong Agency/
+  // Campaign (or a currently-empty one) - not a filter mistake, since Agency/
+  // Campaign filters are hidden/locked for that account entirely (see
+  // SUPER_ADMIN_ONLY_ELEMENT_IDS). Naming the account's own locked scope in
+  // the empty-state message turns an opaque "no records" into something the
+  // account holder (or whoever manages Campaign Logins) can actually act on.
+  function emptyUserListMessage() {
+    if (storage.isSuperAdmin()) return 'No matching user records found.';
+    const scope = `${storage.getMyAgencyName() || 'your Agency'} → ${storage.getMyCampaignName() || 'your Campaign'}`;
+    return `No matching user records found for ${scope}. If you expect users here, ask a Super Admin to verify this login's Campaign Logins entry points to the correct Agency/Campaign.`;
+  }
+
   function renderUserTable() {
     const tbody = document.getElementById('adminUserTableBody');
     const counterElem = document.getElementById('userCountBadge');
@@ -1844,7 +1858,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       tbody.innerHTML = `
         <tr>
           <td colspan="12" class="text-center py-4 text-muted">
-            No matching user records found.
+            ${emptyUserListMessage()}
           </td>
         </tr>
       `;
@@ -2183,6 +2197,36 @@ document.addEventListener('DOMContentLoaded', async () => {
     setVal('kpiTotalSupervisor', counts.totalSupervisor);
     setVal('kpiTotalFC', counts.totalFC);
     setVal('kpiActiveCampaigns', counts.activeCampaigns);
+
+    await refreshRecentUsers({ agencyId, campaignId });
+  }
+
+  async function refreshRecentUsers(filters) {
+    const tbody = document.getElementById('dashboardRecentUsersBody');
+    if (!tbody) return;
+
+    let recent;
+    try {
+      recent = await storage.fetchRecentUsers(filters, 5);
+    } catch (err) {
+      tbody.innerHTML = `<tr><td colspan="5" class="text-center py-4 text-muted">Failed to load Recent Users.</td></tr>`;
+      return;
+    }
+
+    if (recent.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="5" class="text-center py-4 text-muted">No Users yet.</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = recent.map(u => `
+      <tr>
+        <td><strong>${u.id}</strong></td>
+        <td>${u.name}</td>
+        <td>${u.designation}</td>
+        <td>${u.status === 'Active' ? '<span class="badge badge-active">Active</span>' : '<span class="badge badge-inactive">Inactive</span>'}</td>
+        <td><small>${u.createdDate ? String(u.createdDate).substring(0, 10) : 'N/A'}</small></td>
+      </tr>
+    `).join('');
   }
 
   /* ==========================================================================
@@ -2712,8 +2756,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   function buildExportFilename({ agencyName, campaignName, role }) {
     const agencyPart = sanitizeForFilename(agencyName) || 'All_Agencies';
     const campaignPart = sanitizeForFilename(campaignName) || 'All_Campaigns';
-    const rolePart = role ? `_${role}` : '';
-    return `${agencyPart}_${campaignPart}${rolePart}.xlsx`;
+    const rolePart = role || 'All_Users';
+    return `${agencyPart}_${campaignPart}_${rolePart}.xlsx`;
   }
 
   // Core export builder - filters is { agencyId, agencyName, campaignId, campaignName,
@@ -2733,7 +2777,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     if (users.length === 0) {
-      showToast('No user records match the selected export options.', 'warning');
+      showToast(
+        storage.isSuperAdmin()
+          ? 'No user records match the selected export options.'
+          : `No user records match the selected export options for ${storage.getMyAgencyName() || 'your Agency'} → ${storage.getMyCampaignName() || 'your Campaign'}. If you expect users here, ask a Super Admin to verify this login's Campaign Logins entry.`,
+        'warning'
+      );
       return;
     }
 
@@ -2882,41 +2931,90 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
+  // Reads the Filtered Export card's current field values in the same shape
+  // exportUsersToExcel()/getUserCount() both expect - shared by the live
+  // "Users Found" preview and the actual Export click so they can never see
+  // a different filter set than what gets exported.
+  function getExportFilterValues() {
+    const agencySelectEl = document.getElementById('exportAgency');
+    const campaignSelectEl = document.getElementById('exportCampaign');
+    return {
+      agencyId: agencySelectEl?.value || '',
+      agencyName: agencySelectEl?.value ? agencySelectEl.options[agencySelectEl.selectedIndex]?.text : '',
+      campaignId: campaignSelectEl?.value || '',
+      campaignName: campaignSelectEl?.value ? campaignSelectEl.options[campaignSelectEl.selectedIndex]?.text : '',
+      role: document.getElementById('exportRole')?.value || '',
+      fromDate: document.getElementById('exportFromDate')?.value || '',
+      toDate: document.getElementById('exportToDate')?.value || ''
+    };
+  }
+
+  // Defense-in-depth even though the Campaign <select> is already scoped to the
+  // chosen Agency by refreshExportCampaignOptions() - guards against a stale
+  // selection (e.g. this exact combination was valid, then the Campaign got
+  // moved/deleted) ever silently exporting/counting the wrong data instead of
+  // surfacing a clear error.
+  function validateExportAgencyCampaign(agencyId, campaignId) {
+    if (!agencyId || !campaignId) return true;
+    const campaign = storage.getCampaignById(campaignId);
+    return !!campaign && campaign.agency_id === agencyId;
+  }
+
+  async function refreshExportUserCount() {
+    const preview = document.getElementById('exportUserCountPreview');
+    if (!preview) return;
+
+    const filters = getExportFilterValues();
+    if (!validateExportAgencyCampaign(filters.agencyId, filters.campaignId)) {
+      preview.textContent = 'Users Found: — (selected Campaign does not belong to the selected Agency)';
+      return;
+    }
+
+    preview.textContent = 'Users Found: …';
+    try {
+      const count = await storage.fetchUserCount(filters);
+      preview.textContent = `Users Found: ${count}`;
+    } catch (err) {
+      preview.textContent = 'Users Found: —';
+    }
+  }
+
   function initExportView() {
     const agencySelect = document.getElementById('exportAgency');
     const btnConfirmExport = document.getElementById('btnConfirmExport');
     const btnExportCampaignData = document.getElementById('btnExportCampaignData');
 
     if (agencySelect) {
-      agencySelect.addEventListener('change', refreshExportCampaignOptions);
+      agencySelect.addEventListener('change', () => {
+        refreshExportCampaignOptions();
+        refreshExportUserCount();
+      });
     }
+
+    ['exportCampaign', 'exportRole', 'exportFromDate', 'exportToDate'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener('change', refreshExportUserCount);
+    });
 
     if (btnConfirmExport) {
       btnConfirmExport.addEventListener('click', async () => {
         if (btnConfirmExport.disabled) return;
 
-        const agencySelectEl = document.getElementById('exportAgency');
-        const campaignSelectEl = document.getElementById('exportCampaign');
-        const exportFromDate = document.getElementById('exportFromDate').value;
-        const exportToDate = document.getElementById('exportToDate').value;
-        const exportRole = document.getElementById('exportRole').value;
+        const filters = getExportFilterValues();
 
-        if (exportFromDate && exportToDate && exportFromDate > exportToDate) {
+        if (filters.fromDate && filters.toDate && filters.fromDate > filters.toDate) {
           showToast('From Date must be on or before To Date.', 'danger');
+          return;
+        }
+
+        if (!validateExportAgencyCampaign(filters.agencyId, filters.campaignId)) {
+          showToast('The selected Campaign does not belong to the selected Agency.', 'danger');
           return;
         }
 
         btnConfirmExport.disabled = true;
         btnConfirmExport.classList.add('is-loading');
-        await exportUsersToExcel({
-          agencyId: agencySelectEl.value,
-          agencyName: agencySelectEl.value ? agencySelectEl.options[agencySelectEl.selectedIndex]?.text : '',
-          campaignId: campaignSelectEl.value,
-          campaignName: campaignSelectEl.value ? campaignSelectEl.options[campaignSelectEl.selectedIndex]?.text : '',
-          role: exportRole,
-          fromDate: exportFromDate,
-          toDate: exportToDate
-        });
+        await exportUsersToExcel(filters);
         btnConfirmExport.disabled = false;
         btnConfirmExport.classList.remove('is-loading');
       });

@@ -802,6 +802,72 @@ $$;
 grant execute on function public.get_report_to_candidates(text, uuid, uuid) to authenticated;
 revoke execute on function public.get_report_to_candidates(text, uuid, uuid) from anon;
 
+-- Active Campaigns count for the Dashboard KPI tile - deliberately
+-- AGENCY-level, not Campaign-level, unlike every other dashboard/list/export
+-- metric in this system. A non-Super-Admin caller's own agency_id is ALWAYS
+-- resolved server-side from account_profiles via auth.uid() (p_agency_id is
+-- silently ignored for that caller - only a Super Admin's argument is
+-- honored, e.g. the Dashboard's own Agency filter dropdown). This closes the
+-- gap where the KPI used to run a bare `select count(*) from campaigns`
+-- client-side - the `campaigns` table's SELECT RLS policy is intentionally
+-- open to any authenticated account (it's just names, not PII), so without
+-- this RPC a scoped account's dashboard would silently show the GLOBAL
+-- active-campaign count across every Agency instead of just its own.
+--
+-- The caller's own campaign_id is INTENTIONALLY IGNORED here (p_campaign_id
+-- is accepted only for a Super Admin's benefit, never applied to a scoped
+-- caller's own scope) - this one KPI answers "how many active Campaigns does
+-- my Agency run", not "am I looking at my own Campaign". Every other
+-- Agency+Campaign-scoped surface (Users, Dashboard user counts, Recent
+-- Users, Search, Export, Report To, ...) is completely unaffected - those
+-- still go through users_select_scoped RLS, which stays Agency+Campaign.
+create or replace function public.get_active_campaigns_count(
+  p_agency_id uuid default null,
+  p_campaign_id uuid default null
+)
+returns bigint
+language plpgsql
+security definer
+stable
+set search_path = public
+as $$
+declare
+  v_caller_role text;
+  v_caller_status text;
+  v_agency_id uuid;
+  v_campaign_id uuid;
+  v_count bigint;
+begin
+  select role, status, agency_id, campaign_id into v_caller_role, v_caller_status, v_agency_id, v_campaign_id
+    from public.account_profiles where id = auth.uid();
+
+  if v_caller_role is null then
+    v_caller_role := 'super_admin'; -- no profile row = legacy Super Admin bootstrap rule
+  elsif v_caller_status <> 'Active' then
+    raise exception 'Your account is not active. Contact your administrator.';
+  end if;
+
+  if v_caller_role = 'super_admin' then
+    v_agency_id := p_agency_id;
+    v_campaign_id := p_campaign_id;
+  else
+    v_campaign_id := null; -- ignore the caller's own campaign_id - this count is Agency-wide, not Campaign-specific
+  end if;
+  -- else (non-super-admin): v_agency_id already holds the caller's own permanent Agency scope from the lookup above.
+
+  select count(*) into v_count
+  from public.campaigns c
+  where c.status = 'Active'
+    and (v_agency_id is null or c.agency_id = v_agency_id)
+    and (v_campaign_id is null or c.id = v_campaign_id);
+
+  return v_count;
+end;
+$$;
+
+grant execute on function public.get_active_campaigns_count(uuid, uuid) to authenticated;
+revoke execute on function public.get_active_campaigns_count(uuid, uuid) from anon;
+
 -- Performs the full user-registration write (duplicate check + Report To
 -- resolution + insert) atomically and returns the created row shaped like
 -- `users_with_report_to`. Authenticated-only (anon revoked - there is no more
