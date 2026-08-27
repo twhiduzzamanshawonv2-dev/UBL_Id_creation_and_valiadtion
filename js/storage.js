@@ -26,6 +26,9 @@ class StorageManager {
     this.page = 1;
     this.pageSize = DEFAULT_PAGE_SIZE;
     this.loaded = false;
+    this.agencies = [];   // full list, cached (small master data)
+    this.campaigns = [];  // full list, cached (small master data)
+    this.currentAccount = null; // { role, agencyId, agencyName, campaignId, campaignName, status } - see loadCurrentAccount()
   }
 
   isConfigured() {
@@ -75,12 +78,12 @@ class StorageManager {
     return dbService.getSignedDocUrls(user);
   }
 
-  async checkDuplicate(mobile, nid, excludeId = null) {
-    return dbService.checkDuplicate(mobile, nid, excludeId);
+  async checkDuplicate(mobile, nid, agencyId, campaignId, excludeId = null) {
+    return dbService.checkDuplicate(mobile, nid, agencyId, campaignId, excludeId);
   }
 
-  async getReportToUsers(targetDesignation, excludeId = null) {
-    return dbService.getReportToUsers(targetDesignation, excludeId);
+  async getReportToUsers(targetDesignation, agencyId, campaignId, excludeId = null) {
+    return dbService.getReportToUsers(targetDesignation, agencyId, campaignId, excludeId);
   }
 
   /**
@@ -104,8 +107,12 @@ class StorageManager {
     return savedUser;
   }
 
-  async updateUser(id, updatedFields) {
-    const savedUser = await dbService.updateUser(id, updatedFields);
+  // Agency/Campaign are not editable (see db-service.js updateUser doc comment) -
+  // `agencyId`/`campaignId` here are the user's EXISTING values, read from the
+  // already-loaded row by the caller, only used to keep the duplicate-check and
+  // Report To lookup correctly scoped.
+  async updateUser(id, updatedFields, agencyId, campaignId) {
+    const savedUser = await dbService.updateUser(id, updatedFields, agencyId, campaignId);
     const idx = this.users.findIndex(u => u.id === id);
     if (idx !== -1) this.users[idx] = savedUser;
     return savedUser;
@@ -124,6 +131,143 @@ class StorageManager {
 
   getDesignations() {
     return [...FIXED_DESIGNATIONS];
+  }
+
+  /**
+   * Loads the FULL Agency/Campaign lists (including Inactive - admin screens
+   * need to see/manage those too) once and caches them - both lists are small
+   * master data, so re-fetching on every dropdown population would be wasteful.
+   * Called once at app init and again after any Agency/Campaign create/update.
+   */
+  async loadAgenciesAndCampaigns() {
+    const [agencies, campaigns] = await Promise.all([
+      dbService.getAgencies(true),
+      dbService.getCampaigns(null, true)
+    ]);
+    this.agencies = agencies;
+    this.campaigns = campaigns;
+  }
+
+  // Synchronous accessors over the cached lists (same style as getRoles()/getDesignations()).
+  getAgencies({ activeOnly = false } = {}) {
+    return activeOnly ? this.agencies.filter(a => a.status === 'Active') : [...this.agencies];
+  }
+
+  getCampaigns({ agencyId = null, activeOnly = false } = {}) {
+    let list = this.campaigns;
+    if (agencyId) list = list.filter(c => c.agency_id === agencyId);
+    if (activeOnly) list = list.filter(c => c.status === 'Active');
+    return [...list];
+  }
+
+  getAgencyById(id) {
+    return this.agencies.find(a => a.id === id) || null;
+  }
+
+  getCampaignById(id) {
+    return this.campaigns.find(c => c.id === id) || null;
+  }
+
+  async addAgency(name) {
+    const created = await dbService.createAgency(name);
+    await this.loadAgenciesAndCampaigns();
+    return created;
+  }
+
+  async updateAgency(id, fields) {
+    const updated = await dbService.updateAgency(id, fields);
+    await this.loadAgenciesAndCampaigns();
+    return updated;
+  }
+
+  async addCampaign(agencyId, name) {
+    const created = await dbService.createCampaign(agencyId, name);
+    await this.loadAgenciesAndCampaigns();
+    return created;
+  }
+
+  async updateCampaign(id, fields) {
+    const updated = await dbService.updateCampaign(id, fields);
+    await this.loadAgenciesAndCampaigns();
+    return updated;
+  }
+
+  async fetchDashboardCounts(filters = {}) {
+    return dbService.getDashboardCounts(filters);
+  }
+
+  /**
+   * Resolves and caches the current session's account scope. No profile row
+   * in the database = legacy Super Admin (mirrors the exact same bootstrap
+   * rule enforced server-side by is_super_admin() in supabase/schema.sql -
+   * this client-side cache is a convenience for instant UI decisions, never
+   * the actual security boundary, which is always the DB's RLS policies).
+   *
+   * Throws if the account's profile row exists but is Inactive/Suspended -
+   * the caller (js/app.js initAuth()) must sign the session out and block
+   * entry when this throws; it is the app-layer half of "disabled account ->
+   * login blocked" (the DB-layer half is my_agency_id()/my_campaign_id()
+   * returning NULL for a non-Active row, so even a leaked/reused session
+   * token gets zero data regardless of this check).
+   */
+  async loadCurrentAccount() {
+    const profile = await dbService.getMyAccountProfile();
+
+    if (!profile) {
+      this.currentAccount = { role: 'super_admin', agencyId: null, campaignId: null, status: 'Active' };
+      return this.currentAccount;
+    }
+
+    if (profile.status !== 'Active') {
+      this.currentAccount = null;
+      throw new Error('Your account has been disabled. Contact your administrator.');
+    }
+
+    this.currentAccount = {
+      role: profile.role,
+      agencyId: profile.agency_id,
+      campaignId: profile.campaign_id,
+      status: profile.status
+    };
+    return this.currentAccount;
+  }
+
+  clearCurrentAccount() {
+    this.currentAccount = null;
+  }
+
+  isSuperAdmin() {
+    return !!this.currentAccount && this.currentAccount.role === 'super_admin';
+  }
+
+  getMyAgencyId() {
+    return this.currentAccount ? this.currentAccount.agencyId : null;
+  }
+
+  getMyCampaignId() {
+    return this.currentAccount ? this.currentAccount.campaignId : null;
+  }
+
+  getMyAgencyName() {
+    const agency = this.getAgencyById(this.getMyAgencyId());
+    return agency ? agency.name : '';
+  }
+
+  getMyCampaignName() {
+    const campaign = this.getCampaignById(this.getMyCampaignId());
+    return campaign ? campaign.name : '';
+  }
+
+  async getAllAccountProfiles() {
+    return dbService.getAllAccountProfiles();
+  }
+
+  async linkAccountProfile(fields) {
+    return dbService.linkAccountProfile(fields);
+  }
+
+  async updateAccountProfile(id, fields) {
+    return dbService.updateAccountProfile(id, fields);
   }
 }
 

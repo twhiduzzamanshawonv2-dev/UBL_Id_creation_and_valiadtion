@@ -16,6 +16,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     nidBack: null
   };
   let editingUserId = null;
+  // Agency/Campaign of the user currently open in the Quick Edit modal - Agency/Campaign
+  // are NOT editable there (see db-service.js updateUser doc comment), but the Report To
+  // candidate lookup and duplicate check still need to stay scoped to them.
+  let editingUserAgencyId = null;
+  let editingUserCampaignId = null;
 
   // Auth state (see initAuth() in Section 0 below). Admin Dashboard / System Settings
   // require a logged-in Supabase Auth session; User Registration / Excel Validator stay
@@ -42,6 +47,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Required Field Messages (shared between inline "as you go" checks and full submit-time validation)
   const REQUIRED_FIELD_MESSAGES = {
+    agency: 'Please select Agency.',
+    campaign: 'Please select Campaign.',
     name: 'Please enter Name.',
     gender: 'Please select Gender.',
     fatherName: "Please enter Father's Name.",
@@ -92,8 +99,31 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Same idea, for the Quick Edit modal.
   let currentEditReportToCandidates = [];
 
-  // Resolves any existing Supabase Auth session BEFORE navigation is wired up, so the
-  // very first admin-tab click (if any) is gated correctly.
+  // Nav tabs / scoped-filter elements that only make sense for Super Admin - declared
+  // up-front (not inline in Section 0 below) for the SAME temporal-dead-zone reason as
+  // MULTISELECT_CONTROL_IDS above: updateNavVisibility() (called from updateAuthUI(),
+  // called from initAuth()) runs synchronously via `await initAuth()` just below, which
+  // executes before the JS engine's top-to-bottom pass would otherwise reach a `const`
+  // placed later in this file - a plain `const` declared inside Section 0 was in its TDZ
+  // at that point and threw "Cannot access before initialization".
+  const SUPER_ADMIN_ONLY_NAV_IDS = ['navAgencies', 'navCampaigns', 'navCampaignLogins'];
+  const SUPER_ADMIN_ONLY_ELEMENT_IDS = [
+    'usersAgencyCampaignFilterGroup',
+    'dashboardFilterBar',
+    'exportAgencyCampaignFilterGroup',
+    'exportCampaignDataCard'
+  ];
+
+  // Same TDZ reason - switchTab() is called (as `switchTab('dashboard')`) at the bottom
+  // of the top-level setup below, before a `const` positioned inside switchTab()'s own
+  // section further down the file would otherwise have executed.
+  const ADMIN_ONLY_VIEWS = ['dashboard', 'create-user', 'admin-management', 'agencies', 'campaigns', 'campaign-logins', 'export', 'excel-validator'];
+  const SUPER_ADMIN_ONLY_VIEWS = ['agencies', 'campaigns', 'campaign-logins'];
+
+  // Resolves any existing Supabase Auth session (and, if one exists, the account's
+  // role/Agency/Campaign scope + the Agencies/Campaigns master lists - see
+  // establishAccountOrSignOut() in Section 0 below) BEFORE navigation is wired up, so
+  // the very first tab click (if any) is gated correctly.
   await initAuth();
 
   // Initialize UI components (event wiring only - no server data needed yet)
@@ -104,14 +134,19 @@ document.addEventListener('DOMContentLoaded', async () => {
   initImageUploads();
   initFormSubmissionAndPreview();
   initAdminDashboard();
-  initSettingsPanel();
+  initDashboardFilterListeners();
+  initAgenciesPanel();
+  initCampaignsPanel();
+  initCampaignLoginsPanel();
+  initExportView();
   initModals();
 
-  // Highlight default navigation tab first - the Admin table's own data load
-  // is triggered by switchTab('admin-management') when that tab is opened,
-  // and the Create form only needs the (static, cheap) Report To candidate
-  // fetch, not the full user list - so there is no upfront full-list load.
-  switchTab('create-user');
+  // Dashboard is the default landing tab now that every view requires login (see
+  // ADMIN_ONLY_VIEWS in switchTab()) - a visitor with no session is transparently
+  // redirected to the Login view, and a logged-in account lands on its own
+  // Agency/Campaign-scoped summary immediately, matching the spec's "after login,
+  // show a campaign-specific dashboard" requirement.
+  switchTab('dashboard');
 
   // Fetches one page of users from Supabase (server-side filtered/paginated -
   // see storage.fetchUsers/db-service.getUsers) and surfaces a clear banner
@@ -141,28 +176,87 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   /* ==========================================================================
-     0. Admin Authentication (Supabase Auth - email/password)
-     Gates the Admin Dashboard and System Settings tabs only. User Registration
-     and Excel Validator remain fully public - see switchTab() below for the
-     actual gate, and supabase/schema.sql for the matching database-side lock
-     (the users table itself is authenticated-only; the public form/duplicate
-     check/report-to picker go through SECURITY DEFINER RPCs instead).
+     0. Authentication & Multi-Tenant Account Resolution (Supabase Auth - email/password)
+     Gates every view except the Login screen itself - there is no more public/
+     no-login surface anywhere in this app. On top of "is there a session", every
+     logged-in account also has a RESOLVED SCOPE (Super Admin, or a permanent
+     Agency+Campaign for an agency_admin - see storage.loadCurrentAccount() /
+     account_profiles in supabase/schema.sql) that drives which nav tabs are
+     visible and whether the Add User form's Agency/Campaign fields are editable
+     or locked. This client-side resolution is a UX convenience only - the actual
+     enforcement is the database's RLS policies, which apply regardless of what
+     the UI shows or hides.
      ========================================================================== */
   function isAuthenticated() {
     return !!(currentSession && currentSession.user);
   }
 
+  // SUPER_ADMIN_ONLY_NAV_IDS / SUPER_ADMIN_ONLY_ELEMENT_IDS are declared up-front near
+  // the top of this file (see the comment there) - not here - to avoid a temporal-dead-
+  // zone ReferenceError.
+  function updateNavVisibility() {
+    const showSuperAdminUI = isAuthenticated() && storage.isSuperAdmin();
+    SUPER_ADMIN_ONLY_NAV_IDS.forEach(id => {
+      const btn = document.getElementById(id);
+      if (btn) btn.style.display = showSuperAdminUI ? '' : 'none';
+    });
+    SUPER_ADMIN_ONLY_ELEMENT_IDS.forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.style.display = showSuperAdminUI ? '' : 'none';
+    });
+  }
+
   function updateAuthUI() {
     const box = document.getElementById('authStatusBox');
     const emailElem = document.getElementById('authUserEmail');
-    if (!box) return;
-    if (isAuthenticated()) {
-      box.style.display = 'flex';
-      if (emailElem) emailElem.textContent = currentSession.user.email;
-    } else {
-      box.style.display = 'none';
-      if (emailElem) emailElem.textContent = '';
+    const scopeElem = document.getElementById('authAccountScope');
+    if (box) {
+      if (isAuthenticated()) {
+        box.style.display = 'flex';
+        if (emailElem) emailElem.textContent = currentSession.user.email;
+        if (scopeElem) {
+          if (storage.isSuperAdmin()) {
+            scopeElem.textContent = 'Super Admin';
+          } else if (storage.currentAccount) {
+            scopeElem.textContent = `${storage.getMyAgencyName()} · ${storage.getMyCampaignName()}`;
+          } else {
+            scopeElem.textContent = '';
+          }
+        }
+      } else {
+        box.style.display = 'none';
+        if (emailElem) emailElem.textContent = '';
+        if (scopeElem) scopeElem.textContent = '';
+      }
     }
+    updateNavVisibility();
+  }
+
+  // Loads the just-authenticated session's account scope (storage.loadCurrentAccount())
+  // and the Agencies/Campaigns master lists. If the account's profile row exists but is
+  // Inactive/Suspended, loadCurrentAccount() throws - that's the app-layer half of
+  // "disabled account -> login blocked" (see storage.js's doc comment on that function
+  // for the DB-layer half, which is the real backstop): the session is signed back out
+  // immediately and the caller is told login failed, never allowed into the app.
+  async function establishAccountOrSignOut() {
+    try {
+      await storage.loadCurrentAccount();
+    } catch (err) {
+      if (window.sb) await window.sb.auth.signOut();
+      currentSession = null;
+      storage.clearCurrentAccount();
+      updateAuthUI();
+      return false;
+    }
+
+    try {
+      await storage.loadAgenciesAndCampaigns();
+    } catch (err) {
+      console.error('Failed to load Agencies/Campaigns:', err);
+    }
+
+    updateNavVisibility();
+    return true;
   }
 
   async function handleLoginSubmit() {
@@ -197,10 +291,33 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     currentSession = data.session;
-    passwordInput.value = '';
+
+    // Resolve the account's role/Agency+Campaign scope BEFORE showing any logged-in UI -
+    // a disabled (Inactive/Suspended) account is signed back out immediately here and
+    // never gets to see a "you're in" flash, even briefly.
+    const accountOk = await establishAccountOrSignOut();
+    if (!accountOk) {
+      errElem.textContent = 'Your account has been disabled. Contact your administrator.';
+      return;
+    }
     updateAuthUI();
 
-    const target = pendingViewAfterLogin || 'admin-management';
+    // Explicitly offer to save this email/password via the Credential Management API
+    // (Chrome/Edge) - this is what makes the browser show its native "Save password?"
+    // prompt for a JS-driven login (a plain form submit alone isn't always enough for
+    // an SPA that never navigates). Best-effort only: unsupported browsers (Firefox/
+    // Safari) silently skip this and fall back to their own submit-based heuristics,
+    // which the real <form>+type="submit" wiring in initAuth() already supports.
+    if (window.PasswordCredential) {
+      try {
+        await navigator.credentials.store(new PasswordCredential({ id: email, password, name: email }));
+      } catch (credErr) {
+        console.error('Credential save prompt failed (non-fatal):', credErr);
+      }
+    }
+    passwordInput.value = '';
+
+    const target = pendingViewAfterLogin || 'dashboard';
     pendingViewAfterLogin = null;
     await switchTab(target);
   }
@@ -210,22 +327,25 @@ document.addEventListener('DOMContentLoaded', async () => {
       await window.sb.auth.signOut();
     }
     currentSession = null;
+    storage.clearCurrentAccount();
     updateAuthUI();
-    await switchTab('create-user');
+    await switchTab('login');
     showToast('Signed out.', 'success');
   }
 
   async function initAuth() {
     const loginForm = document.getElementById('loginForm');
-    const btnLoginSubmit = document.getElementById('btnLoginSubmit');
     const btnLogout = document.getElementById('btnLogout');
-    const passwordInput = document.getElementById('loginPassword');
 
-    if (loginForm) loginForm.addEventListener('submit', (e) => e.preventDefault());
-    if (btnLoginSubmit) btnLoginSubmit.addEventListener('click', handleLoginSubmit);
-    if (passwordInput) {
-      passwordInput.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') handleLoginSubmit();
+    // A real form `submit` event (button is type="submit", so both a click and pressing
+    // Enter in either field trigger this naturally) - this, plus the autocomplete
+    // attributes on the email/password inputs, is what lets the browser recognize this
+    // as a login and offer to autofill/save the credentials (see handleLoginSubmit()'s
+    // explicit Credential Management API call for the Chrome/Edge save prompt).
+    if (loginForm) {
+      loginForm.addEventListener('submit', (e) => {
+        e.preventDefault();
+        handleLoginSubmit();
       });
     }
     if (btnLogout) btnLogout.addEventListener('click', handleLogout);
@@ -233,6 +353,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (window.sb) {
       const { data } = await window.sb.auth.getSession();
       currentSession = data.session;
+      if (isAuthenticated()) {
+        await establishAccountOrSignOut();
+      }
       window.sb.auth.onAuthStateChange((_event, session) => {
         currentSession = session;
         updateAuthUI();
@@ -257,13 +380,26 @@ document.addEventListener('DOMContentLoaded', async () => {
   // `options.skipRefetch`: skip the Supabase re-fetch below - used right after a write
   // (create/update/toggle/reset) that already refreshed the cache, to avoid a redundant
   // network round-trip immediately after the user just triggered one.
+  // ADMIN_ONLY_VIEWS / SUPER_ADMIN_ONLY_VIEWS are declared up-front near the top of this
+  // file (see the comment there) - not here - to avoid a temporal-dead-zone
+  // ReferenceError: the initial `switchTab('dashboard')` call at the bottom of the
+  // top-level setup runs before the JS engine's top-to-bottom pass would otherwise reach
+  // a `const` placed this far down.
   async function switchTab(viewId, options = {}) {
-    // Admin Dashboard / System Settings require a logged-in session - anyone not signed
-    // in gets routed to the Login view instead, and the tab they actually asked for is
-    // remembered (see handleLoginSubmit) so a successful sign-in lands them there.
-    if ((viewId === 'admin-management' || viewId === 'admin-settings') && !isAuthenticated()) {
+    // Admin-only views require a logged-in session - anyone not signed in gets routed
+    // to the Login view instead, and the tab they actually asked for is remembered
+    // (see handleLoginSubmit) so a successful sign-in lands them there.
+    if (ADMIN_ONLY_VIEWS.includes(viewId) && !isAuthenticated()) {
       pendingViewAfterLogin = viewId;
       viewId = 'login';
+    }
+
+    // A Super-Admin-only view requested by an authenticated-but-not-Super-Admin
+    // account (stale bookmark, manual switchTab() call) - they ARE logged in, just
+    // not authorized for this specific view, so redirect into their own Dashboard
+    // rather than back to the Login screen.
+    if (SUPER_ADMIN_ONLY_VIEWS.includes(viewId) && isAuthenticated() && !storage.isSuperAdmin()) {
+      viewId = 'dashboard';
     }
 
     // Update nav active buttons
@@ -291,22 +427,33 @@ document.addEventListener('DOMContentLoaded', async () => {
     // candidate list for whatever Designation is currently selected, which
     // is a much smaller, targeted query (see refreshReportToForDesignation).
     if (viewId === 'create-user') {
+      populateAgencyDropdown();
       populateRoleDropdown();
       populateDesignationDropdown();
       syncRoleWithDesignation();
       await refreshReportToForDesignation();
+    } else if (viewId === 'dashboard') {
+      populateDashboardFilters();
+      await refreshDashboardCounts();
     } else if (viewId === 'admin-management') {
       if (!options.skipRefetch) {
         const tbody = document.getElementById('adminUserTableBody');
         if (tbody) {
-          tbody.innerHTML = `<tr><td colspan="10" class="text-center py-4 text-muted">Loading users...</td></tr>`;
+          tbody.innerHTML = `<tr><td colspan="12" class="text-center py-4 text-muted">Loading users...</td></tr>`;
         }
         populateAdminFilters();
         await refreshUsersFromSheet(getAdminFilterValues(), 1);
       }
       renderUserTable();
-    } else if (viewId === 'admin-settings') {
-      renderSettingsLists();
+    } else if (viewId === 'agencies') {
+      renderAgenciesList();
+    } else if (viewId === 'campaigns') {
+      populateCampaignsFilterAgency();
+      renderCampaignsList();
+    } else if (viewId === 'campaign-logins') {
+      renderCampaignLoginsList();
+    } else if (viewId === 'export') {
+      populateExportFilters();
     }
   }
 
@@ -404,6 +551,139 @@ document.addEventListener('DOMContentLoaded', async () => {
         validateFieldInline('designation');
       });
     }
+
+    // Agency drives the Campaign dropdown (dependent) and the Report To candidate
+    // list (Report To is scoped to the same Agency+Campaign as this submission).
+    const agencySelect = document.getElementById('agency');
+    if (agencySelect) {
+      agencySelect.addEventListener('change', () => {
+        populateCampaignDropdown(agencySelect.value);
+        document.getElementById('campaign').value = '';
+        validateFieldInline('agency');
+        validateFieldInline('campaign');
+        refreshReportToForDesignation();
+      });
+    }
+    const campaignSelect = document.getElementById('campaign');
+    if (campaignSelect) {
+      campaignSelect.addEventListener('change', () => {
+        validateFieldInline('campaign');
+        refreshReportToForDesignation();
+      });
+    }
+  }
+
+  // Shows/hides the real <select>s vs. the read-only locked display for Agency/Campaign
+  // on the Add User form - a Super Admin gets the normal selectable dropdowns; an
+  // agency_admin account NEVER gets to pick/change its own Agency/Campaign (per the
+  // multi-tenant login system's core requirement), so it only ever sees a locked 🔒
+  // display of its own permanent scope. The underlying <select>s are still populated
+  // and hold the correct value either way (see populateAgencyDropdown()/
+  // populateCampaignDropdown() below) - only the VISUAL presentation differs - so every
+  // other function that reads #agency/#campaign's .value (validation, submission,
+  // Report To scoping) keeps working completely unchanged for both roles.
+  function updateAddUserAgencyCampaignFieldMode() {
+    const superAdmin = storage.isSuperAdmin();
+    const agencySelect = document.getElementById('agency');
+    const campaignSelect = document.getElementById('campaign');
+    const agencyLocked = document.getElementById('agencyLockedDisplay');
+    const campaignLocked = document.getElementById('campaignLockedDisplay');
+
+    if (agencySelect) agencySelect.style.display = superAdmin ? '' : 'none';
+    if (campaignSelect) campaignSelect.style.display = superAdmin ? '' : 'none';
+    if (agencyLocked) agencyLocked.style.display = superAdmin ? 'none' : 'flex';
+    if (campaignLocked) campaignLocked.style.display = superAdmin ? 'none' : 'flex';
+
+    if (!superAdmin) {
+      const agencyLockedText = document.getElementById('agencyLockedText');
+      const campaignLockedText = document.getElementById('campaignLockedText');
+      if (agencyLockedText) agencyLockedText.textContent = storage.getMyAgencyName() || 'Not assigned';
+      if (campaignLockedText) campaignLockedText.textContent = storage.getMyCampaignName() || 'Not assigned';
+    }
+  }
+
+  // Fills #agency from the cached Active Agencies list (mirrors populateDesignationDropdown())
+  // for a Super Admin. For an agency_admin account, the select is instead pinned to that
+  // account's own permanent Agency (single option, pre-selected, disabled) - see
+  // updateAddUserAgencyCampaignFieldMode() for the visual lock-down on top of this.
+  function populateAgencyDropdown() {
+    const agencySelect = document.getElementById('agency');
+    if (!agencySelect) return;
+
+    if (!storage.isSuperAdmin()) {
+      const myAgencyId = storage.getMyAgencyId();
+      const myAgency = storage.getAgencyById(myAgencyId);
+      agencySelect.innerHTML = myAgency
+        ? `<option value="${myAgency.id}">${myAgency.name}</option>`
+        : '<option value="">-- Agency Unavailable --</option>';
+      agencySelect.value = myAgencyId || '';
+      agencySelect.disabled = true;
+      populateCampaignDropdown(myAgencyId, { locked: true });
+      updateAddUserAgencyCampaignFieldMode();
+      return;
+    }
+
+    agencySelect.disabled = false;
+    const currentVal = agencySelect.value;
+    const agencies = storage.getAgencies({ activeOnly: true });
+
+    agencySelect.innerHTML = '<option value="">-- Select Agency --</option>';
+    agencies.forEach(a => {
+      const opt = document.createElement('option');
+      opt.value = a.id;
+      opt.textContent = a.name;
+      agencySelect.appendChild(opt);
+    });
+
+    if (agencies.some(a => a.id === currentVal)) {
+      agencySelect.value = currentVal;
+    } else {
+      // Previously-selected Agency no longer exists/active - Campaign must reset too.
+      populateCampaignDropdown('');
+    }
+    updateAddUserAgencyCampaignFieldMode();
+  }
+
+  // Fills #campaign scoped to the given Agency id - disabled with a placeholder
+  // until an Agency is chosen (same dependent-dropdown shape as Location filters).
+  // `opts.locked`: pin to the caller's own single Campaign instead (agency_admin path -
+  // see populateAgencyDropdown() above).
+  function populateCampaignDropdown(agencyId, opts = {}) {
+    const campaignSelect = document.getElementById('campaign');
+    if (!campaignSelect) return;
+
+    if (opts.locked) {
+      const myCampaignId = storage.getMyCampaignId();
+      const myCampaign = storage.getCampaignById(myCampaignId);
+      campaignSelect.innerHTML = myCampaign
+        ? `<option value="${myCampaign.id}">${myCampaign.name}</option>`
+        : '<option value="">-- Campaign Unavailable --</option>';
+      campaignSelect.value = myCampaignId || '';
+      campaignSelect.disabled = true;
+      return;
+    }
+
+    if (!agencyId) {
+      campaignSelect.innerHTML = '<option value="">-- Select Agency First --</option>';
+      campaignSelect.disabled = true;
+      return;
+    }
+
+    const currentVal = campaignSelect.value;
+    const campaigns = storage.getCampaigns({ agencyId, activeOnly: true });
+
+    campaignSelect.disabled = false;
+    campaignSelect.innerHTML = '<option value="">-- Select Campaign --</option>';
+    campaigns.forEach(c => {
+      const opt = document.createElement('option');
+      opt.value = c.id;
+      opt.textContent = c.name;
+      campaignSelect.appendChild(opt);
+    });
+
+    if (campaigns.some(c => c.id === currentVal)) {
+      campaignSelect.value = currentVal;
+    }
   }
 
   // Role always mirrors Designation - the select is disabled so a user can never pick a
@@ -426,6 +706,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Refreshes the create-form Report To field's enabled state, hint text, candidate list,
   // and clears any previously-picked value that's no longer valid for the new Designation.
   async function refreshReportToForDesignation() {
+    const agencyId = document.getElementById('agency')?.value || '';
+    const campaignId = document.getElementById('campaign')?.value || '';
     const designation = document.getElementById('designation').value;
     const targetDesignation = REPORT_TO_TARGET_DESIGNATION[designation] || null;
     const searchInput = document.getElementById('reportToSearch');
@@ -434,7 +716,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     const hint = document.getElementById('reportToHint');
     if (!searchInput || !hiddenInput) return;
 
-    if (!designation) {
+    if (!agencyId || !campaignId) {
+      searchInput.disabled = true;
+      searchInput.placeholder = 'Select Agency and Campaign first';
+      if (hint) hint.textContent = 'Select Agency and Campaign to see valid Report To options';
+      hiddenInput.value = '';
+      searchInput.value = '';
+      if (dropdownList) dropdownList.innerHTML = '';
+      currentCreateReportToCandidates = [];
+    } else if (!designation) {
       searchInput.disabled = true;
       searchInput.placeholder = 'Select Designation first';
       if (hint) hint.textContent = 'Select a Designation to see valid Report To options';
@@ -456,7 +746,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       searchInput.placeholder = 'Search reporting user by name...';
       if (hint) hint.textContent = `Select the ${targetDesignation} this ${designation} reports to`;
 
-      currentCreateReportToCandidates = await storage.getReportToUsers(targetDesignation);
+      currentCreateReportToCandidates = await storage.getReportToUsers(targetDesignation, agencyId, campaignId);
       const candidateNames = currentCreateReportToCandidates.map(u => u.name);
       if (hiddenInput.value && !candidateNames.includes(hiddenInput.value)) {
         hiddenInput.value = '';
@@ -1074,8 +1364,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (!isValid) return false;
 
     // Check Duplicate Mobile & NID - authoritative check against Supabase (not a local
-    // cache), since a full user list is no longer held in memory.
-    const dupCheck = await storage.checkDuplicate(mobileVal, nidVal);
+    // cache), since a full user list is no longer held in memory. Scoped to the
+    // currently-selected Agency+Campaign - the same person CAN be registered again
+    // under a different Agency+Campaign (see check_duplicate_public in schema.sql).
+    const agencyVal = document.getElementById('agency').value;
+    const campaignVal = document.getElementById('campaign').value;
+    const dupCheck = await storage.checkDuplicate(mobileVal, nidVal, agencyVal, campaignVal);
     if (dupCheck.duplicate) {
       const warningBanner = document.getElementById('duplicateWarningBanner');
       if (warningBanner) {
@@ -1119,7 +1413,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
 
         // Collect Form Data
+        const agencySelect = document.getElementById('agency');
+        const campaignSelect = document.getElementById('campaign');
         currentFormData = {
+          agencyId: agencySelect.value,
+          agencyName: agencySelect.options[agencySelect.selectedIndex]?.text || '',
+          campaignId: campaignSelect.value,
+          campaignName: campaignSelect.options[campaignSelect.selectedIndex]?.text || '',
           name: document.getElementById('name').value,
           gender: document.getElementById('gender').value,
           fatherName: document.getElementById('fatherName').value,
@@ -1168,6 +1468,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     const contentContainer = document.getElementById('previewModalContent');
 
     contentContainer.innerHTML = `
+      <div class="preview-section">
+        <h4 class="preview-heading">Agency &amp; Campaign</h4>
+        <div class="preview-grid">
+          <div><strong>Agency:</strong> ${data.agencyName}</div>
+          <div><strong>Campaign:</strong> ${data.campaignName}</div>
+        </div>
+      </div>
+
       <div class="preview-section">
         <h4 class="preview-heading">Personal Information</h4>
         <div class="preview-grid">
@@ -1243,6 +1551,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     // (via its onChange handler) to empty & disable District/Upazila/Thana automatically.
     if (divisionMS) divisionMS.clear();
 
+    // form.reset() reverts Agency's <select> back to its empty (or, for a scoped
+    // agency_admin account, browser-default) value, but it does NOT undo the
+    // disabled/locked state we set via JS - resync both Agency and Campaign explicitly
+    // (populateAgencyDropdown() re-locks or re-cascades Campaign as appropriate).
+    populateAgencyDropdown();
+
     // form.reset() reverts Designation's <select> back to its empty default, but it does NOT
     // undo the `disabled`/placeholder state we set on Role/Report To via JS - resync explicitly.
     syncRoleWithDesignation();
@@ -1289,6 +1603,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   function getAdminFilterValues() {
     return {
       search: document.getElementById('adminSearchInput')?.value.trim() || '',
+      agencyId: document.getElementById('filterAgency')?.value || '',
+      campaignId: document.getElementById('filterCampaign')?.value || '',
       division: document.getElementById('filterDivision')?.value || '',
       district: document.getElementById('filterDistrict')?.value || '',
       upazila: document.getElementById('filterUpazila')?.value || '',
@@ -1306,7 +1622,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   async function reloadUserTable(page = 1) {
     const tbody = document.getElementById('adminUserTableBody');
     if (tbody) {
-      tbody.innerHTML = `<tr><td colspan="10" class="text-center py-4 text-muted">Loading...</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="12" class="text-center py-4 text-muted">Loading...</td></tr>`;
     }
     await refreshUsersFromSheet(getAdminFilterValues(), page);
     renderUserTable();
@@ -1325,18 +1641,20 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (btnResetFilters) {
       btnResetFilters.addEventListener('click', () => {
         searchInput.value = '';
-        ['filterDivision', 'filterDistrict', 'filterUpazila', 'filterThana',
+        ['filterAgency', 'filterCampaign', 'filterDivision', 'filterDistrict', 'filterUpazila', 'filterThana',
          'filterDesignation', 'filterRole', 'filterStatus',
          'filterFromDate', 'filterToDate'].forEach(id => {
           const select = document.getElementById(id);
           if (select) select.value = '';
         });
         populateLocationFilterCascade();
+        refreshAdminCampaignFilterOptions();
         reloadUserTable(1);
       });
     }
 
     initLocationFilterCascade();
+    initAdminAgencyCampaignFilterCascade();
 
     ['filterDesignation', 'filterRole', 'filterStatus', 'filterFromDate', 'filterToDate'].forEach(id => {
       const select = document.getElementById(id);
@@ -1346,7 +1664,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 
     if (btnExportExcel) {
-      btnExportExcel.addEventListener('click', () => openExportOptionsModal());
+      btnExportExcel.addEventListener('click', () => switchTab('export'));
     }
 
     const btnPrevPage = document.getElementById('btnPrevPage');
@@ -1427,9 +1745,57 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
+  // Agency -> Campaign filter cascade for the Users table (same shape as the
+  // Division -> District location cascade above, but 2 levels). Wired once;
+  // the actual option lists are (re)populated by populateAdminAgencyCampaignFilters().
+  function initAdminAgencyCampaignFilterCascade() {
+    const agencySelect = document.getElementById('filterAgency');
+    const campaignSelect = document.getElementById('filterCampaign');
+    if (!agencySelect || !campaignSelect) return;
+
+    agencySelect.addEventListener('change', () => {
+      refreshAdminCampaignFilterOptions();
+      reloadUserTable(1);
+    });
+    campaignSelect.addEventListener('change', () => reloadUserTable(1));
+  }
+
+  // Repopulates #filterCampaign scoped to whatever Agency is currently selected in
+  // #filterAgency (or ALL campaigns if no Agency is selected) - preserves the
+  // current selection if it's still valid, clears it otherwise.
+  function refreshAdminCampaignFilterOptions() {
+    const agencySelect = document.getElementById('filterAgency');
+    const campaignSelect = document.getElementById('filterCampaign');
+    if (!agencySelect || !campaignSelect) return;
+
+    const cur = campaignSelect.value;
+    const campaigns = storage.getCampaigns({ agencyId: agencySelect.value || null });
+    campaignSelect.innerHTML = '<option value="">All Campaigns</option>';
+    campaigns.forEach(c => campaignSelect.innerHTML += `<option value="${c.id}">${c.name}</option>`);
+    campaignSelect.value = campaigns.some(c => c.id === cur) ? cur : '';
+  }
+
+  // Repopulates #filterAgency from the full cached Agency list (Active + Inactive -
+  // admins should be able to filter to Inactive Agencies/Campaigns too, unlike the
+  // public Create form which only ever offers Active ones).
+  function populateAdminAgencyCampaignFilters() {
+    const agencySelect = document.getElementById('filterAgency');
+    if (!agencySelect) return;
+
+    const cur = agencySelect.value;
+    const agencies = storage.getAgencies();
+    agencySelect.innerHTML = '<option value="">All Agencies</option>';
+    agencies.forEach(a => agencySelect.innerHTML += `<option value="${a.id}">${a.name}</option>`);
+    agencySelect.value = agencies.some(a => a.id === cur) ? cur : '';
+
+    refreshAdminCampaignFilterOptions();
+  }
+
   function populateAdminFilters() {
     const roles = storage.getRoles();
     const designations = storage.getDesignations();
+
+    populateAdminAgencyCampaignFilters();
 
     // Roles filter
     const roleSelect = document.getElementById('filterRole');
@@ -1476,7 +1842,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (users.length === 0) {
       tbody.innerHTML = `
         <tr>
-          <td colspan="10" class="text-center py-4 text-muted">
+          <td colspan="12" class="text-center py-4 text-muted">
             No matching user records found.
           </td>
         </tr>
@@ -1493,6 +1859,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       return `
         <tr>
           <td><strong>${u.id}</strong></td>
+          <td><small>${u.agencyName || '—'}</small></td>
+          <td><small>${u.campaignName || '—'}</small></td>
           <td>
             <div class="user-cell">
               <img src="${u.userPhoto}" class="user-avatar" alt="Avatar" loading="lazy" />
@@ -1617,6 +1985,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         <div>
           <h3>${u.name}</h3>
           <p class="text-muted">User ID: <strong>${u.id}</strong> | Status: <span class="badge ${u.status === 'Active' ? 'badge-active' : 'badge-inactive'}">${u.status}</span></p>
+          <p><strong>Agency:</strong> ${u.agencyName || 'N/A'} | <strong>Campaign:</strong> ${u.campaignName || 'N/A'}</p>
           <p><strong>Designation:</strong> ${u.designation} | <strong>Role:</strong> ${u.role}</p>
         </div>
       </div>
@@ -1692,7 +2061,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     editReportToSelect.disabled = false;
     editReportToSelect.innerHTML = '<option value="">-- Select Report To --</option>';
-    currentEditReportToCandidates = await storage.getReportToUsers(targetDesignation, editingUserId);
+    currentEditReportToCandidates = await storage.getReportToUsers(
+      targetDesignation, editingUserAgencyId, editingUserCampaignId, editingUserId
+    );
     currentEditReportToCandidates.forEach(u => {
       const opt = document.createElement('option');
       opt.value = u.name;
@@ -1710,6 +2081,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (!u) return;
 
     editingUserId = id;
+    editingUserAgencyId = u.agencyId;
+    editingUserCampaignId = u.campaignId;
     const modal = document.getElementById('userEditModal');
 
     document.getElementById('editUserId').value = u.id;
@@ -1735,9 +2108,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     modal.classList.add('open');
   }
 
-  /* ==========================================================================
-     10. Admin Settings Panel (Manage Roles & Designations)
-     ========================================================================== */
   // Helper to format ISO date to DD-MMM-YY format (e.g., 13-Dec-99)
   function formatDisplayDate(iso) {
     if (!iso) return '';
@@ -1750,34 +2120,487 @@ document.addEventListener('DOMContentLoaded', async () => {
     return `${day}-${month}-${year}`;
   }
 
-  // Note: the old "Reset All Data" (hard-wipe-and-reseed) feature was intentionally
-  // removed during the Supabase migration - it required a DELETE capability the schema
-  // never grants (status is toggled instead, see supabase/schema.sql). This view is now
-  // reachable only by logged-in admins (see switchTab()), but the destructive DELETE was
-  // never re-added - if it's wanted, add it deliberately alongside a DB DELETE policy.
-  function initSettingsPanel() {}
+  /* ==========================================================================
+     10a. Dashboard (Summary KPI Cards, Agency/Campaign scoped)
+     ========================================================================== */
+  function populateDashboardFilters() {
+    const agencySelect = document.getElementById('dashFilterAgency');
+    const campaignSelect = document.getElementById('dashFilterCampaign');
+    if (!agencySelect || !campaignSelect) return;
 
-  function renderSettingsLists() {
-    const roleListContainer = document.getElementById('rolesConfigList');
-    const designationListContainer = document.getElementById('designationsConfigList');
+    const curAgency = agencySelect.value;
+    const agencies = storage.getAgencies();
+    agencySelect.innerHTML = '<option value="">All Agencies</option>';
+    agencies.forEach(a => agencySelect.innerHTML += `<option value="${a.id}">${a.name}</option>`);
+    agencySelect.value = agencies.some(a => a.id === curAgency) ? curAgency : '';
 
-    if (roleListContainer) {
-      const roles = storage.getRoles();
-      roleListContainer.innerHTML = roles.map(r => `
-        <div class="config-chip" style="opacity:1;">
-          <span>✅ ${r}</span>
-        </div>
-      `).join('');
+    refreshDashboardCampaignOptions();
+  }
+
+  function refreshDashboardCampaignOptions() {
+    const agencySelect = document.getElementById('dashFilterAgency');
+    const campaignSelect = document.getElementById('dashFilterCampaign');
+    if (!agencySelect || !campaignSelect) return;
+
+    const cur = campaignSelect.value;
+    const campaigns = storage.getCampaigns({ agencyId: agencySelect.value || null });
+    campaignSelect.innerHTML = '<option value="">All Campaigns</option>';
+    campaigns.forEach(c => campaignSelect.innerHTML += `<option value="${c.id}">${c.name}</option>`);
+    campaignSelect.value = campaigns.some(c => c.id === cur) ? cur : '';
+  }
+
+  function initDashboardFilterListeners() {
+    const agencySelect = document.getElementById('dashFilterAgency');
+    const campaignSelect = document.getElementById('dashFilterCampaign');
+    if (!agencySelect || !campaignSelect) return;
+
+    agencySelect.addEventListener('change', () => {
+      refreshDashboardCampaignOptions();
+      refreshDashboardCounts();
+    });
+    campaignSelect.addEventListener('change', () => refreshDashboardCounts());
+  }
+
+  async function refreshDashboardCounts() {
+    const agencyId = document.getElementById('dashFilterAgency')?.value || '';
+    const campaignId = document.getElementById('dashFilterCampaign')?.value || '';
+
+    let counts;
+    try {
+      counts = await storage.fetchDashboardCounts({ agencyId, campaignId });
+    } catch (err) {
+      showToast(err.message || 'Failed to load dashboard counts.', 'danger');
+      return;
     }
 
-    if (designationListContainer) {
-      const designations = storage.getDesignations();
-      designationListContainer.innerHTML = designations.map(d => `
-        <div class="config-chip" style="opacity:1;">
-          <span>✅ ${d}</span>
-        </div>
-      `).join('');
+    const setVal = (id, val) => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = val;
+    };
+    setVal('kpiTotalUsers', counts.totalUsers);
+    setVal('kpiTotalBP', counts.totalBP);
+    setVal('kpiTotalSupervisor', counts.totalSupervisor);
+    setVal('kpiTotalFC', counts.totalFC);
+    setVal('kpiActiveCampaigns', counts.activeCampaigns);
+  }
+
+  /* ==========================================================================
+     10b. Agencies Management (Add/Edit)
+     ========================================================================== */
+  let editingAgencyId = null;
+
+  function renderAgenciesList() {
+    const tbody = document.getElementById('agenciesTableBody');
+    if (!tbody) return;
+
+    const agencies = storage.getAgencies();
+    if (agencies.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="4" class="text-center py-4 text-muted">No Agencies yet - click "+ Add Agency" to create one.</td></tr>`;
+      return;
     }
+
+    tbody.innerHTML = agencies.map(a => `
+      <tr>
+        <td><strong>${a.name}</strong></td>
+        <td>${a.status === 'Active' ? '<span class="badge badge-active">Active</span>' : '<span class="badge badge-inactive">Inactive</span>'}</td>
+        <td><small>${a.created_date ? a.created_date.substring(0, 10) : 'N/A'}</small></td>
+        <td>
+          <div class="action-buttons">
+            <button type="button" class="btn-action btn-edit" data-id="${a.id}" title="Edit Agency">✏️ Edit</button>
+          </div>
+        </td>
+      </tr>
+    `).join('');
+
+    tbody.querySelectorAll('.btn-edit').forEach(btn => {
+      btn.addEventListener('click', () => openAgencyModal(storage.getAgencyById(btn.getAttribute('data-id'))));
+    });
+  }
+
+  function openAgencyModal(agency = null) {
+    const modal = document.getElementById('agencyModal');
+    if (!modal) return;
+    editingAgencyId = agency ? agency.id : null;
+
+    document.getElementById('agencyModalTitle').textContent = agency ? 'Edit Agency' : 'Add Agency';
+    document.getElementById('agencyId').value = agency ? agency.id : '';
+    document.getElementById('agencyName').value = agency ? agency.name : '';
+    document.getElementById('agencyNameError').textContent = '';
+    document.getElementById('agencyStatus').value = agency ? agency.status : 'Active';
+    document.getElementById('agencyStatusGroup').style.display = agency ? 'block' : 'none';
+
+    modal.classList.add('open');
+  }
+
+  async function saveAgency() {
+    const nameInput = document.getElementById('agencyName');
+    const errElem = document.getElementById('agencyNameError');
+    const btn = document.getElementById('btnSaveAgency');
+    const name = nameInput.value.trim();
+    errElem.textContent = '';
+
+    if (!name) {
+      errElem.textContent = 'Please enter an Agency name.';
+      return;
+    }
+
+    btn.disabled = true;
+    btn.classList.add('is-loading');
+    try {
+      if (editingAgencyId) {
+        const status = document.getElementById('agencyStatus').value;
+        await storage.updateAgency(editingAgencyId, { name, status });
+      } else {
+        await storage.addAgency(name);
+      }
+      document.getElementById('agencyModal').classList.remove('open');
+      renderAgenciesList();
+      showToast('Agency saved successfully.', 'success');
+    } catch (err) {
+      errElem.textContent = err.message || 'Failed to save Agency.';
+    }
+    btn.disabled = false;
+    btn.classList.remove('is-loading');
+  }
+
+  function initAgenciesPanel() {
+    const btnAdd = document.getElementById('btnAddAgency');
+    if (btnAdd) btnAdd.addEventListener('click', () => openAgencyModal(null));
+
+    const btnClose = document.getElementById('btnCloseAgencyModal');
+    const btnCancel = document.getElementById('btnCancelAgency');
+    [btnClose, btnCancel].forEach(btn => {
+      if (btn) btn.addEventListener('click', () => document.getElementById('agencyModal').classList.remove('open'));
+    });
+
+    const btnSave = document.getElementById('btnSaveAgency');
+    if (btnSave) btnSave.addEventListener('click', saveAgency);
+  }
+
+  /* ==========================================================================
+     10c. Campaigns Management (Add/Edit, dependent on Agency)
+     ========================================================================== */
+  let editingCampaignId = null;
+
+  function populateCampaignsFilterAgency() {
+    const select = document.getElementById('campaignsFilterAgency');
+    if (!select) return;
+    const cur = select.value;
+    select.innerHTML = '<option value="">All Agencies</option>';
+    storage.getAgencies().forEach(a => select.innerHTML += `<option value="${a.id}">${a.name}</option>`);
+    select.value = storage.getAgencies().some(a => a.id === cur) ? cur : '';
+  }
+
+  function renderCampaignsList() {
+    const tbody = document.getElementById('campaignsTableBody');
+    if (!tbody) return;
+
+    const agencyFilter = document.getElementById('campaignsFilterAgency')?.value || null;
+    const campaigns = storage.getCampaigns({ agencyId: agencyFilter || null });
+
+    if (campaigns.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="5" class="text-center py-4 text-muted">No Campaigns yet - click "+ Add Campaign" to create one.</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = campaigns.map(c => {
+      const agency = storage.getAgencyById(c.agency_id);
+      return `
+        <tr>
+          <td><strong>${c.name}</strong></td>
+          <td>${agency ? agency.name : '—'}</td>
+          <td>${c.status === 'Active' ? '<span class="badge badge-active">Active</span>' : '<span class="badge badge-inactive">Inactive</span>'}</td>
+          <td><small>${c.created_date ? c.created_date.substring(0, 10) : 'N/A'}</small></td>
+          <td>
+            <div class="action-buttons">
+              <button type="button" class="btn-action btn-edit" data-id="${c.id}" title="Edit Campaign">✏️ Edit</button>
+              <button type="button" class="btn-action btn-export-campaign" data-id="${c.id}" title="Export this Campaign's data">📦 Export</button>
+            </div>
+          </td>
+        </tr>
+      `;
+    }).join('');
+
+    tbody.querySelectorAll('.btn-edit').forEach(btn => {
+      btn.addEventListener('click', () => openCampaignModal(storage.getCampaignById(btn.getAttribute('data-id'))));
+    });
+    tbody.querySelectorAll('.btn-export-campaign').forEach(btn => {
+      btn.addEventListener('click', () => exportCampaignData(btn.getAttribute('data-id')));
+    });
+  }
+
+  function populateCampaignModalAgencySelect(selectedAgencyId) {
+    const select = document.getElementById('campaignAgency');
+    if (!select) return;
+    select.innerHTML = '<option value="">-- Select Agency --</option>';
+    storage.getAgencies().forEach(a => select.innerHTML += `<option value="${a.id}">${a.name}</option>`);
+    if (selectedAgencyId) select.value = selectedAgencyId;
+  }
+
+  function openCampaignModal(campaign = null) {
+    const modal = document.getElementById('campaignModal');
+    if (!modal) return;
+    editingCampaignId = campaign ? campaign.id : null;
+
+    document.getElementById('campaignModalTitle').textContent = campaign ? 'Edit Campaign' : 'Add Campaign';
+    document.getElementById('campaignIdField').value = campaign ? campaign.id : '';
+    populateCampaignModalAgencySelect(campaign ? campaign.agency_id : (document.getElementById('campaignsFilterAgency')?.value || ''));
+    document.getElementById('campaignName').value = campaign ? campaign.name : '';
+    document.getElementById('campaignNameError').textContent = '';
+    document.getElementById('campaignAgencyError').textContent = '';
+    document.getElementById('campaignStatus').value = campaign ? campaign.status : 'Active';
+    document.getElementById('campaignStatusGroup').style.display = campaign ? 'block' : 'none';
+
+    modal.classList.add('open');
+  }
+
+  async function saveCampaign() {
+    const agencySelect = document.getElementById('campaignAgency');
+    const nameInput = document.getElementById('campaignName');
+    const agencyErrElem = document.getElementById('campaignAgencyError');
+    const nameErrElem = document.getElementById('campaignNameError');
+    const btn = document.getElementById('btnSaveCampaign');
+    const agencyId = agencySelect.value;
+    const name = nameInput.value.trim();
+    agencyErrElem.textContent = '';
+    nameErrElem.textContent = '';
+
+    if (!agencyId) {
+      agencyErrElem.textContent = 'Please select an Agency.';
+      return;
+    }
+    if (!name) {
+      nameErrElem.textContent = 'Please enter a Campaign name.';
+      return;
+    }
+
+    btn.disabled = true;
+    btn.classList.add('is-loading');
+    try {
+      if (editingCampaignId) {
+        const status = document.getElementById('campaignStatus').value;
+        await storage.updateCampaign(editingCampaignId, { name, agencyId, status });
+      } else {
+        await storage.addCampaign(agencyId, name);
+      }
+      document.getElementById('campaignModal').classList.remove('open');
+      renderCampaignsList();
+      showToast('Campaign saved successfully.', 'success');
+    } catch (err) {
+      nameErrElem.textContent = err.message || 'Failed to save Campaign.';
+    }
+    btn.disabled = false;
+    btn.classList.remove('is-loading');
+  }
+
+  function initCampaignsPanel() {
+    const btnAdd = document.getElementById('btnAddCampaign');
+    if (btnAdd) btnAdd.addEventListener('click', () => openCampaignModal(null));
+
+    const filterAgency = document.getElementById('campaignsFilterAgency');
+    if (filterAgency) filterAgency.addEventListener('change', () => renderCampaignsList());
+
+    const btnClose = document.getElementById('btnCloseCampaignModal');
+    const btnCancel = document.getElementById('btnCancelCampaign');
+    [btnClose, btnCancel].forEach(btn => {
+      if (btn) btn.addEventListener('click', () => document.getElementById('campaignModal').classList.remove('open'));
+    });
+
+    const btnSave = document.getElementById('btnSaveCampaign');
+    if (btnSave) btnSave.addEventListener('click', saveCampaign);
+  }
+
+  /* ==========================================================================
+     10d. Campaign Logins Management (Super Admin only)
+     Links an EXISTING Supabase Auth account (created first in the Supabase
+     Dashboard) to a role + permanent Agency+Campaign scope - see
+     db-service.js linkAccountProfile() and the "Campaign Logins" section of
+     ReadMe.md. This screen never creates the auth account itself.
+     ========================================================================== */
+  let editingCampaignLoginId = null;
+
+  function renderCampaignLoginsList() {
+    const tbody = document.getElementById('campaignLoginsTableBody');
+    if (!tbody) return;
+    tbody.innerHTML = `<tr><td colspan="6" class="text-center py-4 text-muted">Loading...</td></tr>`;
+
+    storage.getAllAccountProfiles().then(profiles => {
+      if (profiles.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="6" class="text-center py-4 text-muted">No linked login accounts yet - click "+ Link Account" to create one.</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = profiles.map(p => {
+        const agency = p.agency_id ? storage.getAgencyById(p.agency_id) : null;
+        const campaign = p.campaign_id ? storage.getCampaignById(p.campaign_id) : null;
+        const roleLabel = p.role === 'super_admin' ? 'Super Admin' : 'Agency / Campaign Admin';
+        const statusBadge = p.status === 'Active'
+          ? '<span class="badge badge-active">Active</span>'
+          : `<span class="badge badge-inactive">${p.status}</span>`;
+        return `
+          <tr>
+            <td>
+              <div class="font-bold">${p.username || '—'}</div>
+              <small class="text-muted">${p.email || ''}</small>
+            </td>
+            <td><span class="badge badge-role">${roleLabel}</span></td>
+            <td>${agency ? agency.name : '—'}</td>
+            <td>${campaign ? campaign.name : '—'}</td>
+            <td>${statusBadge}</td>
+            <td>
+              <div class="action-buttons">
+                <button type="button" class="btn-action btn-edit" data-id="${p.id}" title="Edit Account">✏️ Edit</button>
+              </div>
+            </td>
+          </tr>
+        `;
+      }).join('');
+
+      tbody.querySelectorAll('.btn-edit').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const profile = profiles.find(p => p.id === btn.getAttribute('data-id'));
+          if (profile) openCampaignLoginModal(profile);
+        });
+      });
+    }).catch(err => {
+      tbody.innerHTML = `<tr><td colspan="6" class="text-center py-4 text-muted">${err.message || 'Failed to load login accounts.'}</td></tr>`;
+    });
+  }
+
+  function populateCampaignLoginAgencySelect(selectedAgencyId) {
+    const select = document.getElementById('campaignLoginAgency');
+    if (!select) return;
+    select.innerHTML = '<option value="">-- Select Agency --</option>';
+    storage.getAgencies().forEach(a => select.innerHTML += `<option value="${a.id}">${a.name}</option>`);
+    if (selectedAgencyId) select.value = selectedAgencyId;
+  }
+
+  function populateCampaignLoginCampaignSelect(agencyId, selectedCampaignId) {
+    const select = document.getElementById('campaignLoginCampaign');
+    if (!select) return;
+    if (!agencyId) {
+      select.innerHTML = '<option value="">-- Select Agency First --</option>';
+      select.disabled = true;
+      return;
+    }
+    select.disabled = false;
+    select.innerHTML = '<option value="">-- Select Campaign --</option>';
+    storage.getCampaigns({ agencyId }).forEach(c => select.innerHTML += `<option value="${c.id}">${c.name}</option>`);
+    if (selectedCampaignId) select.value = selectedCampaignId;
+  }
+
+  // Agency/Campaign only apply to an agency_admin account - Super Admin has neither
+  // (mirrors the account_profiles_scope_check DB constraint), so those two fields are
+  // hidden whenever Role=Super Admin is selected in the modal.
+  function updateCampaignLoginRoleFieldVisibility() {
+    const role = document.getElementById('campaignLoginRole').value;
+    const isSuperAdminRole = role === 'super_admin';
+    const agencyGroup = document.getElementById('campaignLoginAgencyGroup');
+    const campaignGroup = document.getElementById('campaignLoginCampaignGroup');
+    if (agencyGroup) agencyGroup.style.display = isSuperAdminRole ? 'none' : 'block';
+    if (campaignGroup) campaignGroup.style.display = isSuperAdminRole ? 'none' : 'block';
+  }
+
+  function openCampaignLoginModal(profile = null) {
+    const modal = document.getElementById('campaignLoginModal');
+    if (!modal) return;
+    editingCampaignLoginId = profile ? profile.id : null;
+
+    document.getElementById('campaignLoginModalTitle').textContent = profile ? 'Edit Account' : 'Link Account';
+    document.getElementById('campaignLoginUserId').value = profile ? profile.id : '';
+    // The User ID is the permanent binding to the Supabase Auth account - editable only
+    // when linking a NEW profile, locked once linked (changing it would silently rebind
+    // the login to a different auth account, which should never happen by accident).
+    document.getElementById('campaignLoginUserId').disabled = !!profile;
+    document.getElementById('campaignLoginUserIdError').textContent = '';
+    document.getElementById('campaignLoginUsername').value = profile ? (profile.username || '') : '';
+    document.getElementById('campaignLoginEmail').value = profile ? (profile.email || '') : '';
+    document.getElementById('campaignLoginRole').value = profile ? profile.role : 'agency_admin';
+    populateCampaignLoginAgencySelect(profile ? profile.agency_id : '');
+    populateCampaignLoginCampaignSelect(profile ? profile.agency_id : '', profile ? profile.campaign_id : '');
+    document.getElementById('campaignLoginAgencyError').textContent = '';
+    document.getElementById('campaignLoginCampaignError').textContent = '';
+    document.getElementById('campaignLoginStatus').value = profile ? profile.status : 'Active';
+    updateCampaignLoginRoleFieldVisibility();
+
+    modal.classList.add('open');
+  }
+
+  async function saveCampaignLogin() {
+    const userId = document.getElementById('campaignLoginUserId').value.trim();
+    const username = document.getElementById('campaignLoginUsername').value.trim();
+    const email = document.getElementById('campaignLoginEmail').value.trim();
+    const role = document.getElementById('campaignLoginRole').value;
+    const agencyId = document.getElementById('campaignLoginAgency').value;
+    const campaignId = document.getElementById('campaignLoginCampaign').value;
+    const status = document.getElementById('campaignLoginStatus').value;
+    const btn = document.getElementById('btnSaveCampaignLogin');
+    const userIdErrElem = document.getElementById('campaignLoginUserIdError');
+    const agencyErrElem = document.getElementById('campaignLoginAgencyError');
+    const campaignErrElem = document.getElementById('campaignLoginCampaignError');
+    userIdErrElem.textContent = '';
+    agencyErrElem.textContent = '';
+    campaignErrElem.textContent = '';
+
+    if (!editingCampaignLoginId) {
+      const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (!userId || !uuidPattern.test(userId)) {
+        userIdErrElem.textContent = 'Please enter a valid User ID (UUID) - copy it from Supabase Dashboard.';
+        return;
+      }
+    }
+    if (role === 'agency_admin') {
+      if (!agencyId) {
+        agencyErrElem.textContent = 'Please select an Agency.';
+        return;
+      }
+      if (!campaignId) {
+        campaignErrElem.textContent = 'Please select a Campaign.';
+        return;
+      }
+    }
+
+    btn.disabled = true;
+    btn.classList.add('is-loading');
+    try {
+      if (editingCampaignLoginId) {
+        await storage.updateAccountProfile(editingCampaignLoginId, { username, email, role, agencyId, campaignId, status });
+      } else {
+        await storage.linkAccountProfile({ userId, username, email, role, agencyId, campaignId, status });
+      }
+      document.getElementById('campaignLoginModal').classList.remove('open');
+      renderCampaignLoginsList();
+      showToast('Login account saved successfully.', 'success');
+    } catch (err) {
+      userIdErrElem.textContent = err.message || 'Failed to save login account.';
+    }
+    btn.disabled = false;
+    btn.classList.remove('is-loading');
+  }
+
+  function initCampaignLoginsPanel() {
+    const btnAdd = document.getElementById('btnAddCampaignLogin');
+    if (btnAdd) btnAdd.addEventListener('click', () => openCampaignLoginModal(null));
+
+    const roleSelect = document.getElementById('campaignLoginRole');
+    if (roleSelect) roleSelect.addEventListener('change', updateCampaignLoginRoleFieldVisibility);
+
+    const agencySelect = document.getElementById('campaignLoginAgency');
+    if (agencySelect) {
+      agencySelect.addEventListener('change', () => {
+        document.getElementById('campaignLoginCampaign').value = '';
+        populateCampaignLoginCampaignSelect(agencySelect.value, '');
+      });
+    }
+
+    const btnClose = document.getElementById('btnCloseCampaignLoginModal');
+    const btnCancel = document.getElementById('btnCancelCampaignLogin');
+    [btnClose, btnCancel].forEach(btn => {
+      if (btn) btn.addEventListener('click', () => document.getElementById('campaignLoginModal').classList.remove('open'));
+    });
+
+    const btnSave = document.getElementById('btnSaveCampaignLogin');
+    if (btnSave) btnSave.addEventListener('click', saveCampaignLogin);
   }
 
   /* ==========================================================================
@@ -1788,9 +2611,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   const EXPORT_ROLE_ORDER = ['BP', 'Supervisor', 'FC'];
 
   // Required columns in order:
-  // Division | District | Upazila | Thana | Name | Gender | Father's Name | Mother's Name | Mobile Number | Email | Date of Birth | Designation | Role | Report To | NID Number | NID Front Side Image | NID Back Side Image | User Photo | Status | Created Date
+  // Agency | Campaign | Division | District | Upazila | Thana | Name | Gender | Father's Name | Mother's Name | Mobile Number | Email | Date of Birth | Designation | Role | Report To | NID Number | NID Front Side Image | NID Back Side Image | User Photo | Status | Created Date
   const EXCEL_HEADERS = [
-    "Division", "District", "Upazila", "Thana", "Name", "Gender", "Father's Name",
+    "Agency", "Campaign", "Division", "District", "Upazila", "Thana", "Name", "Gender", "Father's Name",
     "Mother's Name", "Mobile Number", "Email", "Date of Birth", "Designation", "Role",
     "Report To", "NID Number", "NID Front Side Image", "NID Back Side Image",
     "User Photo", "Status", "Created Date"
@@ -1798,6 +2621,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   function buildExcelRow(u) {
     return [
+      u.agencyName || '',
+      u.campaignName || '',
       toLocationDisplay(u.division),
       toLocationDisplay(u.district),
       toLocationDisplay(u.upazila),
@@ -1836,41 +2661,38 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
-  // `exportFromDate`/`exportToDate` (each "yyyy-MM-dd", from the Export Options popup) and
-  // `exportRole` ('' | 'BP' | 'Supervisor' | 'FC') narrow the export beyond whatever the
-  // dashboard's own filters (search, location, its own From/To Date range, etc.) already
-  // apply. The export queries Supabase directly with the combined filter set - it never
-  // downloads the whole table into the browser just to filter it client-side.
-  async function exportUsersToExcel(exportFromDate = '', exportToDate = '', exportRole = '') {
-    const btnExportExcel = document.getElementById('btnExportExcel');
-    if (btnExportExcel) {
-      btnExportExcel.disabled = true;
-      btnExportExcel.classList.add('is-loading');
-    }
+  // Strips characters that would break a filename (path separators, reserved Windows
+  // chars) and collapses whitespace to underscores - used by buildExportFilename().
+  function sanitizeForFilename(str) {
+    return String(str || '')
+      .replace(/[\\/:*?"<>|]/g, '')
+      .replace(/\s+/g, '_')
+      .trim();
+  }
 
-    const exportFilters = {
-      ...getAdminFilterValues(),
-      // Export Options popup values win over the dashboard's own From/To Date if both are set.
-      fromDate: exportFromDate || getAdminFilterValues().fromDate,
-      toDate: exportToDate || getAdminFilterValues().toDate,
-      role: exportRole || getAdminFilterValues().role
-    };
+  // Meaningful, sanitized export filenames per the Agency/Campaign/Role in scope, e.g.
+  // "Asiatic_Horlicks_School_BP.xlsx", "All_Agencies_All_Campaigns_BP.xlsx".
+  function buildExportFilename({ agencyName, campaignName, role }) {
+    const agencyPart = sanitizeForFilename(agencyName) || 'All_Agencies';
+    const campaignPart = sanitizeForFilename(campaignName) || 'All_Campaigns';
+    const rolePart = role ? `_${role}` : '';
+    return `${agencyPart}_${campaignPart}${rolePart}.xlsx`;
+  }
+
+  // Core export builder - filters is { agencyId, agencyName, campaignId, campaignName,
+  // role, fromDate, toDate }. Queries Supabase directly with the combined filter set (never
+  // downloads the whole table into the browser just to filter it client-side), groups the
+  // result by Role into one workbook with one sheet per role (or just the picked role), and
+  // downloads it under a meaningful, Agency/Campaign/Role-based filename.
+  async function exportUsersToExcel(filters = {}) {
+    const { agencyId = '', agencyName = '', campaignId = '', campaignName = '', role = '', fromDate = '', toDate = '' } = filters;
 
     let users;
     try {
-      users = await dbService.getAllUsersForExport(exportFilters);
+      users = await dbService.getAllUsersForExport({ agencyId, campaignId, role, fromDate, toDate });
     } catch (err) {
       showToast(err.message || 'Failed to load data for export.', 'danger');
-      if (btnExportExcel) {
-        btnExportExcel.disabled = false;
-        btnExportExcel.classList.remove('is-loading');
-      }
       return;
-    }
-
-    if (btnExportExcel) {
-      btnExportExcel.disabled = false;
-      btnExportExcel.classList.remove('is-loading');
     }
 
     if (users.length === 0) {
@@ -1878,8 +2700,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       return;
     }
 
-    // Which role sheets/files to produce: all 3 by default, or just the one picked in the popup.
-    const rolesToExport = exportRole ? [exportRole] : EXPORT_ROLE_ORDER;
+    // Which role sheets/files to produce: all 3 by default, or just the one picked.
+    const rolesToExport = role ? [role] : EXPORT_ROLE_ORDER;
 
     // Group by Role. A record whose role isn't one of the 3 recognized values
     // (legacy/mismatched data) is skipped from the role-based sheets rather than
@@ -1895,24 +2717,14 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     });
 
-    let dateStr;
-    if (exportFromDate || exportToDate) {
-      dateStr = `${exportFromDate || 'start'}_to_${exportToDate || 'now'}`;
-    } else {
-      const fFromDate = document.getElementById('filterFromDate')?.value || '';
-      const fToDate = document.getElementById('filterToDate')?.value || '';
-      dateStr = (fFromDate || fToDate)
-        ? `${fFromDate || 'start'}_to_${fToDate || 'now'}`
-        : new Date().toISOString().slice(0, 10);
-    }
-    const roleSuffix = exportRole ? `_${exportRole}` : '';
+    const filename = buildExportFilename({ agencyName, campaignName, role });
 
     // Check if SheetJS XLSX library is available
     if (typeof XLSX !== 'undefined') {
       const mobileColLetter = XLSX.utils.encode_col(EXCEL_HEADERS.indexOf('Mobile Number'));
       const workbook = XLSX.utils.book_new();
-      rolesToExport.forEach(role => {
-        const rows = usersByRole[role].map(buildExcelRow);
+      rolesToExport.forEach(r => {
+        const rows = usersByRole[r].map(buildExcelRow);
         const worksheet = XLSX.utils.aoa_to_sheet([EXCEL_HEADERS, ...rows]);
         worksheet['!cols'] = computeExcelColWidths(rows);
         // Force the Mobile Number column to a Text cell type + "@" number format, so Excel
@@ -1924,24 +2736,25 @@ document.addEventListener('DOMContentLoaded', async () => {
             cell.z = '@';
           }
         });
-        XLSX.utils.book_append_sheet(workbook, worksheet, role);
+        XLSX.utils.book_append_sheet(workbook, worksheet, r);
       });
 
-      XLSX.writeFile(workbook, `User_Account_Collection${roleSuffix}_${dateStr}.xlsx`);
+      XLSX.writeFile(workbook, filename);
       showToast(
         unmatchedCount > 0
           ? `Exported (${unmatchedCount} record(s) with an unrecognized role were skipped).`
-          : exportRole
-            ? `Exported successfully - ${exportRole} sheet included.`
+          : role
+            ? `Exported successfully - ${role} sheet included.`
             : 'Exported successfully - BP, Supervisor, and FC sheets included.',
         'success'
       );
     } else {
       // High-compatibility CSV fallback with UTF-8 BOM. A single .csv can't hold multiple
       // tabs, so this downloads one file per role (skipping roles with no matching records).
+      const baseName = filename.replace(/\.xlsx$/, '');
       let filesDownloaded = 0;
-      rolesToExport.forEach(role => {
-        const rows = usersByRole[role].map(buildExcelRow);
+      rolesToExport.forEach(r => {
+        const rows = usersByRole[r].map(buildExcelRow);
         if (rows.length === 0) return;
 
         let csvContent = "\uFEFF"; // UTF-8 BOM
@@ -1954,7 +2767,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const url = URL.createObjectURL(blob);
         const link = document.createElement("a");
         link.setAttribute("href", url);
-        link.setAttribute("download", `User_Account_Collection_${role}_${dateStr}.csv`);
+        link.setAttribute("download", `${baseName}${role ? '' : '_' + r}.csv`);
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
@@ -1963,10 +2776,125 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       showToast(
         filesDownloaded > 0
-          ? `Exported ${filesDownloaded} CSV file(s)${exportRole ? '' : ', one per role (BP/Supervisor/FC)'}.`
+          ? `Exported ${filesDownloaded} CSV file(s)${role ? '' : ', one per role (BP/Supervisor/FC)'}.`
           : 'No user records available to export.',
         filesDownloaded > 0 ? 'success' : 'warning'
       );
+    }
+  }
+
+  /* ==========================================================================
+     11a. Export View (Agency/Campaign/Role filtered export + Campaign Data)
+     ========================================================================== */
+  function populateExportFilters() {
+    const agencySelect = document.getElementById('exportAgency');
+    const campaignSelect = document.getElementById('exportCampaign');
+    const campaignOnlySelect = document.getElementById('exportCampaignOnly');
+    if (!agencySelect || !campaignSelect) return;
+
+    const curAgency = agencySelect.value;
+    const agencies = storage.getAgencies();
+    agencySelect.innerHTML = '<option value="">All Agencies</option>';
+    agencies.forEach(a => agencySelect.innerHTML += `<option value="${a.id}">${a.name}</option>`);
+    agencySelect.value = agencies.some(a => a.id === curAgency) ? curAgency : '';
+
+    refreshExportCampaignOptions();
+
+    // "Export Campaign Data" always lists every Campaign (across all Agencies) - it's a
+    // standalone one-Campaign picker, independent of the Filtered Export's own Agency/Campaign.
+    if (campaignOnlySelect) {
+      const cur = campaignOnlySelect.value;
+      campaignOnlySelect.innerHTML = '<option value="">-- Select Campaign --</option>';
+      storage.getCampaigns().forEach(c => {
+        const agency = storage.getAgencyById(c.agency_id);
+        campaignOnlySelect.innerHTML += `<option value="${c.id}">${agency ? agency.name + ' - ' : ''}${c.name}</option>`;
+      });
+      campaignOnlySelect.value = storage.getCampaigns().some(c => c.id === cur) ? cur : '';
+    }
+  }
+
+  function refreshExportCampaignOptions() {
+    const agencySelect = document.getElementById('exportAgency');
+    const campaignSelect = document.getElementById('exportCampaign');
+    if (!agencySelect || !campaignSelect) return;
+
+    const cur = campaignSelect.value;
+    const campaigns = storage.getCampaigns({ agencyId: agencySelect.value || null });
+    campaignSelect.innerHTML = '<option value="">All Campaigns</option>';
+    campaigns.forEach(c => campaignSelect.innerHTML += `<option value="${c.id}">${c.name}</option>`);
+    campaignSelect.value = campaigns.some(c => c.id === cur) ? cur : '';
+  }
+
+  // Exports one whole Campaign's data as a single workbook with separate BP/Supervisor/FC
+  // sheets (no Role filter) - reuses exportUsersToExcel() unchanged, just pre-filled with
+  // one Campaign and no other filters. Reachable both from the Export view's "Export Campaign
+  // Data" card and from a one-click "Export" button per row on the Campaigns list.
+  async function exportCampaignData(campaignId) {
+    const campaign = storage.getCampaignById(campaignId);
+    if (!campaign) {
+      showToast('Please select a Campaign to export.', 'danger');
+      return;
+    }
+    const agency = storage.getAgencyById(campaign.agency_id);
+    await exportUsersToExcel({
+      agencyId: campaign.agency_id,
+      agencyName: agency ? agency.name : '',
+      campaignId: campaign.id,
+      campaignName: campaign.name,
+      role: ''
+    });
+  }
+
+  function initExportView() {
+    const agencySelect = document.getElementById('exportAgency');
+    const btnConfirmExport = document.getElementById('btnConfirmExport');
+    const btnExportCampaignData = document.getElementById('btnExportCampaignData');
+
+    if (agencySelect) {
+      agencySelect.addEventListener('change', refreshExportCampaignOptions);
+    }
+
+    if (btnConfirmExport) {
+      btnConfirmExport.addEventListener('click', async () => {
+        if (btnConfirmExport.disabled) return;
+
+        const agencySelectEl = document.getElementById('exportAgency');
+        const campaignSelectEl = document.getElementById('exportCampaign');
+        const exportFromDate = document.getElementById('exportFromDate').value;
+        const exportToDate = document.getElementById('exportToDate').value;
+        const exportRole = document.getElementById('exportRole').value;
+
+        if (exportFromDate && exportToDate && exportFromDate > exportToDate) {
+          showToast('From Date must be on or before To Date.', 'danger');
+          return;
+        }
+
+        btnConfirmExport.disabled = true;
+        btnConfirmExport.classList.add('is-loading');
+        await exportUsersToExcel({
+          agencyId: agencySelectEl.value,
+          agencyName: agencySelectEl.value ? agencySelectEl.options[agencySelectEl.selectedIndex]?.text : '',
+          campaignId: campaignSelectEl.value,
+          campaignName: campaignSelectEl.value ? campaignSelectEl.options[campaignSelectEl.selectedIndex]?.text : '',
+          role: exportRole,
+          fromDate: exportFromDate,
+          toDate: exportToDate
+        });
+        btnConfirmExport.disabled = false;
+        btnConfirmExport.classList.remove('is-loading');
+      });
+    }
+
+    if (btnExportCampaignData) {
+      btnExportCampaignData.addEventListener('click', async () => {
+        if (btnExportCampaignData.disabled) return;
+        const campaignId = document.getElementById('exportCampaignOnly').value;
+        btnExportCampaignData.disabled = true;
+        btnExportCampaignData.classList.add('is-loading');
+        await exportCampaignData(campaignId);
+        btnExportCampaignData.disabled = false;
+        btnExportCampaignData.classList.remove('is-loading');
+      });
     }
   }
 
@@ -2062,8 +2990,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
 
         // Duplicate mobile check excluding current user - authoritative query against
-        // Supabase, not a local cache.
-        const dupCheck = await storage.checkDuplicate(updatedMobile, null, editingUserId);
+        // Supabase, not a local cache. Scoped to this user's (unchangeable) Agency+Campaign.
+        const dupCheck = await storage.checkDuplicate(
+          updatedMobile, null, editingUserAgencyId, editingUserCampaignId, editingUserId
+        );
         if (dupCheck.duplicate && dupCheck.field === 'Mobile Number') {
           alert(dupCheck.message);
           return;
@@ -2099,7 +3029,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             designation: updatedDesignation,
             role: updatedRole,
             reportTo: updatedReportTo
-          });
+          }, editingUserAgencyId, editingUserCampaignId);
 
           editModal.classList.remove('open');
           renderUserTable();
@@ -2119,68 +3049,12 @@ document.addEventListener('DOMContentLoaded', async () => {
       });
     }
 
-    // Export Options Modal Buttons
-    const exportModal = document.getElementById('exportOptionsModal');
-    const btnCloseExportModal = document.getElementById('btnCloseExportModal');
-    const btnCancelExport = document.getElementById('btnCancelExport');
-    const btnConfirmExport = document.getElementById('btnConfirmExport');
-
-    if (btnCloseExportModal) {
-      btnCloseExportModal.addEventListener('click', () => {
-        exportModal.classList.remove('open');
-      });
-    }
-
-    if (btnCancelExport) {
-      btnCancelExport.addEventListener('click', () => {
-        exportModal.classList.remove('open');
-      });
-    }
-
-    if (btnConfirmExport) {
-      btnConfirmExport.addEventListener('click', async () => {
-        if (btnConfirmExport.disabled) return;
-        const exportFromDate = document.getElementById('exportFromDate').value; // '' = no lower bound
-        const exportToDate = document.getElementById('exportToDate').value; // '' = no upper bound
-        const exportRole = document.getElementById('exportRole').value; // '' = all roles
-
-        if (exportFromDate && exportToDate && exportFromDate > exportToDate) {
-          showToast('From Date must be on or before To Date.', 'danger');
-          return;
-        }
-
-        btnConfirmExport.disabled = true;
-        btnConfirmExport.classList.add('is-loading');
-        await exportUsersToExcel(exportFromDate, exportToDate, exportRole);
-        btnConfirmExport.disabled = false;
-        btnConfirmExport.classList.remove('is-loading');
-
-        exportModal.classList.remove('open');
-      });
-    }
-
     // Close Modals on Overlay Backdrop Click
     window.addEventListener('click', (e) => {
       if (e.target.classList.contains('modal-backdrop')) {
         e.target.classList.remove('open');
       }
     });
-  }
-
-  // Opens the Export Options modal (From/To Date + Role) - resets it to defaults ("any
-  // date", "all roles") each time so stale selections from a previous export don't carry over.
-  function openExportOptionsModal() {
-    const modal = document.getElementById('exportOptionsModal');
-    const exportFromDateInput = document.getElementById('exportFromDate');
-    const exportToDateInput = document.getElementById('exportToDate');
-    const exportRoleSelect = document.getElementById('exportRole');
-    if (!modal) return;
-
-    if (exportFromDateInput) exportFromDateInput.value = '';
-    if (exportToDateInput) exportToDateInput.value = '';
-    if (exportRoleSelect) exportRoleSelect.value = '';
-
-    modal.classList.add('open');
   }
 
   function showToast(message, type = 'info') {

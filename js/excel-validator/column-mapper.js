@@ -6,6 +6,8 @@
  */
 (function () {
   const FIELD_DEFINITIONS = [
+    { field: 'agency', label: 'Agency', synonyms: ['AGENCY', 'AGENCY NAME', 'CLIENT AGENCY'] },
+    { field: 'campaign', label: 'Campaign', synonyms: ['CAMPAIGN', 'CAMPAIGN NAME', 'PROJECT'] },
     { field: 'name', label: 'Name', synonyms: ['NAME', 'FULL NAME', 'CONSUMER NAME', 'EMPLOYEE NAME', 'APPLICANT NAME', 'USER NAME'] },
     { field: 'fatherName', label: "Father's Name", synonyms: ["FATHERS NAME", 'FATHER NAME', 'FATHER'] },
     { field: 'motherName', label: "Mother's Name", synonyms: ["MOTHERS NAME", 'MOTHER NAME', 'MOTHER'] },

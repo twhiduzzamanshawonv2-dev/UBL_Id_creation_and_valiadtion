@@ -152,8 +152,10 @@ begin
   if not found
      or target_row.status <> 'Active'
      or target_row.designation <> target_designation
-     or target_row.role <> target_designation then
-    raise exception 'Report To must be an existing, active %.', target_designation;
+     or target_row.role <> target_designation
+     or target_row.agency_id <> new.agency_id
+     or target_row.campaign_id <> new.campaign_id then
+    raise exception 'Report To must be an existing, active % within the same Agency and Campaign.', target_designation;
   end if;
 
   return new;
@@ -164,6 +166,312 @@ drop trigger if exists trg_validate_report_to on public.users;
 create trigger trg_validate_report_to
   before insert or update on public.users
   for each row execute function public.validate_report_to();
+
+-- ----------------------------------------------------------------------------
+-- Agencies & Campaigns (master data) - a user submission is now scoped to one
+-- Agency + one Campaign. A Campaign belongs to exactly one Agency (dependent
+-- dropdown in the UI). Both are admin-manageable (add/edit only - no hard
+-- delete, same "toggle status" pattern as users).
+-- ----------------------------------------------------------------------------
+create table if not exists public.agencies (
+  id           uuid primary key default gen_random_uuid(),
+  name         text not null unique,
+  status       text not null default 'Active' check (status in ('Active', 'Inactive')),
+  created_by   text,
+  created_date timestamptz not null default now(),
+  updated_by   text,
+  updated_date timestamptz not null default now()
+);
+
+comment on table public.agencies is
+  'Reusable Agency master data (e.g. "Asiatic Experiential Marketing Ltd."). Admin-managed via the Agencies screen.';
+
+drop trigger if exists trg_agencies_touch_updated_date on public.agencies;
+create trigger trg_agencies_touch_updated_date
+  before update on public.agencies
+  for each row execute function public.touch_updated_date();
+
+create table if not exists public.campaigns (
+  id           uuid primary key default gen_random_uuid(),
+  agency_id    uuid not null references public.agencies(id) on delete restrict,
+  name         text not null,
+  status       text not null default 'Active' check (status in ('Active', 'Inactive')),
+  created_by   text,
+  created_date timestamptz not null default now(),
+  updated_by   text,
+  updated_date timestamptz not null default now(),
+
+  -- A Campaign name only needs to be unique WITHIN its Agency (two different
+  -- agencies can both run a campaign called "Corporate Drive").
+  constraint campaigns_agency_name_unique unique (agency_id, name)
+);
+
+comment on table public.campaigns is
+  'Reusable Campaign master data, each belonging to exactly one Agency (dependent dropdown in the UI).';
+
+drop trigger if exists trg_campaigns_touch_updated_date on public.campaigns;
+create trigger trg_campaigns_touch_updated_date
+  before update on public.campaigns
+  for each row execute function public.touch_updated_date();
+
+create index if not exists idx_campaigns_agency_id on public.campaigns (agency_id);
+create index if not exists idx_agencies_status      on public.agencies (status);
+create index if not exists idx_campaigns_status     on public.campaigns (status);
+
+-- Seed the "Unassigned" fallback pair BEFORE users.agency_id/campaign_id go
+-- NOT NULL below - every pre-existing users row is backfilled onto this pair.
+-- Safe to re-run (ON CONFLICT DO NOTHING keeps the same row/id every time).
+insert into public.agencies (name, status, created_by, updated_by)
+values ('Unassigned', 'Active', 'System (Migration)', 'System (Migration)')
+on conflict (name) do nothing;
+
+insert into public.campaigns (agency_id, name, status, created_by, updated_by)
+select id, 'Unassigned', 'Active', 'System (Migration)', 'System (Migration)'
+from public.agencies where name = 'Unassigned'
+on conflict (agency_id, name) do nothing;
+
+-- ----------------------------------------------------------------------------
+-- users table alterations - scope every user submission to an Agency+Campaign,
+-- and drop the old GLOBAL mobile/nid uniqueness in favor of composite
+-- UNIQUE(agency_id, campaign_id, mobile/nid) - the same person CAN now be
+-- resubmitted under a different Agency+Campaign, but not twice under the SAME one.
+-- ----------------------------------------------------------------------------
+alter table public.users add column if not exists agency_id   uuid references public.agencies(id) on delete restrict;
+alter table public.users add column if not exists campaign_id uuid references public.campaigns(id) on delete restrict;
+
+-- Backfill existing rows onto "Unassigned"/"Unassigned" before NOT NULL below.
+-- trg_validate_report_to is disabled for this single UPDATE only: it now checks
+-- report_to_id's target row against the same agency_id/campaign_id, and during
+-- a bulk backfill the target row's own agency_id/campaign_id may not have been
+-- written yet in the same statement (row processing order isn't guaranteed) -
+-- re-enabled immediately after, before any real insert/update can occur.
+alter table public.users disable trigger trg_validate_report_to;
+
+update public.users
+set agency_id = (select id from public.agencies where name = 'Unassigned'),
+    campaign_id = (select c.id from public.campaigns c
+                    join public.agencies a on a.id = c.agency_id
+                    where a.name = 'Unassigned' and c.name = 'Unassigned')
+where agency_id is null or campaign_id is null;
+
+alter table public.users enable trigger trg_validate_report_to;
+
+alter table public.users alter column agency_id set not null;
+alter table public.users alter column campaign_id set not null;
+
+-- Defense-in-depth: the selected Campaign must actually belong to the selected
+-- Agency (mirrors the same check already done in register_user()).
+create or replace function public.validate_user_campaign_agency()
+returns trigger
+language plpgsql
+as $$
+declare
+  campaign_agency_id uuid;
+begin
+  select agency_id into campaign_agency_id from public.campaigns where id = new.campaign_id;
+  if campaign_agency_id is null or campaign_agency_id <> new.agency_id then
+    raise exception 'Selected Campaign does not belong to the selected Agency.';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_validate_user_campaign_agency on public.users;
+create trigger trg_validate_user_campaign_agency
+  before insert or update on public.users
+  for each row execute function public.validate_user_campaign_agency();
+
+alter table public.users drop constraint if exists users_mobile_key;
+alter table public.users drop constraint if exists users_nid_key;
+
+drop index if exists idx_users_mobile_agency_campaign;
+drop index if exists idx_users_nid_agency_campaign;
+create unique index idx_users_mobile_agency_campaign on public.users (agency_id, campaign_id, mobile);
+create unique index idx_users_nid_agency_campaign     on public.users (agency_id, campaign_id, nid);
+-- (the existing regex CHECK constraints on mobile/nid format are untouched -
+-- only the uniqueness SCOPE changed, not format validity.)
+
+create index if not exists idx_users_agency_id   on public.users (agency_id);
+create index if not exists idx_users_campaign_id on public.users (campaign_id);
+-- Speeds up the very common "Report To candidates" lookup, now scoped to
+-- Agency+Campaign+Designation+Active in addition to the plain designation_status index below.
+create index if not exists idx_users_agency_campaign_designation_status
+  on public.users (agency_id, campaign_id, designation, status);
+
+-- ----------------------------------------------------------------------------
+-- account_profiles - multi-tenant login accounts. Extends Supabase Auth
+-- (auth.users) rather than duplicating it: this table only maps an existing
+-- auth.users.id to a role + Agency/Campaign scope. Password storage/hashing
+-- stays entirely inside Supabase Auth - never touched or duplicated here.
+--
+-- A row with role='super_admin' has NULL agency_id/campaign_id (unrestricted
+-- access). A row with role='agency_admin' is permanently scoped to exactly
+-- one Agency+Campaign. An auth.users account with NO row here at all is
+-- treated as Super Admin (see is_super_admin() below) - this is the deliberate
+-- bootstrap rule so pre-existing admin accounts (created before this table
+-- existed) keep working with zero manual migration.
+-- ----------------------------------------------------------------------------
+create table if not exists public.account_profiles (
+  id           uuid primary key references auth.users(id) on delete cascade,
+  username     text,                -- friendly label, e.g. "asiatic_horlicks_school"
+  email        text,                -- denormalized/informational only - `id` is the real binding
+  role         text not null default 'agency_admin' check (role in ('super_admin', 'agency_admin')),
+  agency_id    uuid references public.agencies(id) on delete restrict,
+  campaign_id  uuid references public.campaigns(id) on delete restrict,
+  status       text not null default 'Active' check (status in ('Active', 'Inactive', 'Suspended')),
+  created_by   text,
+  created_date timestamptz not null default now(),
+  updated_by   text,
+  updated_date timestamptz not null default now(),
+
+  constraint account_profiles_scope_check check (
+    (role = 'super_admin' and agency_id is null and campaign_id is null)
+    or (role = 'agency_admin' and agency_id is not null and campaign_id is not null)
+  )
+);
+
+comment on table public.account_profiles is
+  'Maps a Supabase Auth user to a role (super_admin/agency_admin) and, for agency_admin, a permanent Agency+Campaign scope. No row = legacy Super Admin (see is_super_admin()).';
+
+drop trigger if exists trg_account_profiles_touch_updated_date on public.account_profiles;
+create trigger trg_account_profiles_touch_updated_date
+  before update on public.account_profiles
+  for each row execute function public.touch_updated_date();
+
+-- Reuses the same "Campaign must belong to the selected Agency" check already
+-- enforced on `users` - the function only ever reads NEW.agency_id/campaign_id,
+-- so it applies unchanged to this table. Only fires when both are non-null
+-- (super_admin rows have NULL/NULL, which the CHECK constraint above already
+-- permits - skip the trigger's lookup entirely in that case rather than
+-- querying campaigns with a NULL id).
+drop trigger if exists trg_validate_account_campaign_agency on public.account_profiles;
+create trigger trg_validate_account_campaign_agency
+  before insert or update on public.account_profiles
+  for each row
+  when (new.campaign_id is not null)
+  execute function public.validate_user_campaign_agency();
+
+create index if not exists idx_account_profiles_agency_campaign on public.account_profiles (agency_id, campaign_id);
+create index if not exists idx_account_profiles_status on public.account_profiles (status);
+
+-- ----------------------------------------------------------------------------
+-- Tenant-scoping helper functions - SECURITY DEFINER so they bypass RLS
+-- internally (reading account_profiles directly), which is what lets them be
+-- called safely from inside RLS policies on OTHER tables without recursion.
+-- ----------------------------------------------------------------------------
+
+-- No profile row = legacy pre-existing admin account = Super Admin (the
+-- deliberate bootstrap rule - see table comment above). An explicit
+-- agency_admin row NEVER becomes Super Admin regardless of status.
+create or replace function public.is_super_admin()
+returns boolean
+language plpgsql
+security definer
+stable
+set search_path = public
+as $$
+declare
+  v_role text;
+  v_status text;
+begin
+  select role, status into v_role, v_status from public.account_profiles where id = auth.uid();
+  if v_role is null then
+    return true;
+  end if;
+  return v_role = 'super_admin' and v_status = 'Active';
+end;
+$$;
+
+-- NULL for Super Admins AND for inactive/suspended agency_admin accounts -
+-- fail-closed: if an inactive account's session token is somehow still used,
+-- it matches nothing (agency_id = NULL is never true) rather than its old scope.
+create or replace function public.my_agency_id()
+returns uuid
+language sql
+security definer
+stable
+set search_path = public
+as $$
+  select agency_id from public.account_profiles where id = auth.uid() and status = 'Active';
+$$;
+
+create or replace function public.my_campaign_id()
+returns uuid
+language sql
+security definer
+stable
+set search_path = public
+as $$
+  select campaign_id from public.account_profiles where id = auth.uid() and status = 'Active';
+$$;
+
+grant execute on function public.is_super_admin() to authenticated;
+grant execute on function public.my_agency_id() to authenticated;
+grant execute on function public.my_campaign_id() to authenticated;
+
+-- ----------------------------------------------------------------------------
+-- RLS for account_profiles - a session may always read its OWN profile row
+-- (needed on login to discover its own scope); only Super Admin may read
+-- every row, or insert/update any row (the Campaign Logins admin screen).
+-- ----------------------------------------------------------------------------
+alter table public.account_profiles enable row level security;
+
+drop policy if exists account_profiles_select on public.account_profiles;
+create policy account_profiles_select on public.account_profiles
+  for select to authenticated
+  using (id = auth.uid() or public.is_super_admin());
+
+drop policy if exists account_profiles_insert_super_admin on public.account_profiles;
+create policy account_profiles_insert_super_admin on public.account_profiles
+  for insert to authenticated
+  with check (public.is_super_admin());
+
+drop policy if exists account_profiles_update_super_admin on public.account_profiles;
+create policy account_profiles_update_super_admin on public.account_profiles
+  for update to authenticated
+  using (public.is_super_admin())
+  with check (public.is_super_admin());
+
+-- ----------------------------------------------------------------------------
+-- RLS for agencies/campaigns - low-sensitivity master data (names only), not
+-- PII like `users`. There is no more public (anon) registration to serve, so
+-- anon access is removed entirely. Any authenticated account may still SELECT
+-- (needed for header/display names even for a scoped account), but only
+-- Super Admin may INSERT/UPDATE (Agencies/Campaigns admin screens are now
+-- Super-Admin-only per the multi-tenant login system).
+-- ----------------------------------------------------------------------------
+alter table public.agencies enable row level security;
+alter table public.campaigns enable row level security;
+
+drop policy if exists agencies_select_all on public.agencies;
+drop policy if exists agencies_select_authenticated on public.agencies;
+create policy agencies_select_authenticated on public.agencies
+  for select to authenticated using (true);
+
+drop policy if exists agencies_insert_authenticated on public.agencies;
+drop policy if exists agencies_insert_super_admin on public.agencies;
+create policy agencies_insert_super_admin on public.agencies
+  for insert to authenticated with check (public.is_super_admin());
+
+drop policy if exists agencies_update_authenticated on public.agencies;
+drop policy if exists agencies_update_super_admin on public.agencies;
+create policy agencies_update_super_admin on public.agencies
+  for update to authenticated using (public.is_super_admin()) with check (public.is_super_admin());
+
+drop policy if exists campaigns_select_all on public.campaigns;
+drop policy if exists campaigns_select_authenticated on public.campaigns;
+create policy campaigns_select_authenticated on public.campaigns
+  for select to authenticated using (true);
+
+drop policy if exists campaigns_insert_authenticated on public.campaigns;
+drop policy if exists campaigns_insert_super_admin on public.campaigns;
+create policy campaigns_insert_super_admin on public.campaigns
+  for insert to authenticated with check (public.is_super_admin());
+
+drop policy if exists campaigns_update_authenticated on public.campaigns;
+drop policy if exists campaigns_update_super_admin on public.campaigns;
+create policy campaigns_update_super_admin on public.campaigns
+  for update to authenticated using (public.is_super_admin()) with check (public.is_super_admin());
 
 -- ----------------------------------------------------------------------------
 -- Indexes - only for fields that are actually searched/filtered/sorted on.
@@ -185,53 +493,72 @@ create index if not exists idx_users_thana_gin       on public.users using gin (
 create index if not exists idx_users_designation_status on public.users (designation, status);
 
 -- ----------------------------------------------------------------------------
--- Row Level Security
+-- Row Level Security - multi-tenant scoped.
 -- ----------------------------------------------------------------------------
--- The app has two public surfaces (User Registration, Excel Validator) that
--- must keep working with no login, and two admin surfaces (Admin Dashboard,
--- System Settings) that now require a logged-in Supabase Auth session.
---
--- Direct table access is therefore locked to `authenticated` only - the
--- public registration form, duplicate-check, and Report To picker no longer
--- read/write this table directly; they go through the SECURITY DEFINER
--- functions below (register_user / check_duplicate_public /
--- get_report_to_candidates), which expose only the narrow slice of data each
--- of those public actions actually needs (no NID numbers, mobile numbers,
--- photos, or full record listings are ever readable by the anon key).
+-- There is no more public (anon, no-login) surface at all - Add User,
+-- Users, Export, and Validation all require a logged-in account (see
+-- account_profiles above). Direct table access is locked to `authenticated`,
+-- and further scoped PER ACCOUNT: a Super Admin sees/writes everything, an
+-- agency_admin account sees/writes ONLY rows matching its own permanent
+-- agency_id/campaign_id (from account_profiles, resolved server-side via
+-- my_agency_id()/my_campaign_id() - never trusted from the client). This is
+-- the actual enforcement layer: even a hand-crafted `sb.from('users').insert()`
+-- call with a forged agency_id from browser devtools is rejected here, not
+-- just hidden by the UI. register_user/check_duplicate_public/
+-- get_report_to_candidates (below) add a second, redundant layer of the same
+-- check inside the RPCs themselves.
 alter table public.users enable row level security;
 
 drop policy if exists users_select_anon on public.users;
 drop policy if exists users_insert_anon on public.users;
 drop policy if exists users_update_anon on public.users;
-
 drop policy if exists users_select_authenticated on public.users;
-create policy users_select_authenticated on public.users
+drop policy if exists users_insert_authenticated on public.users;
+drop policy if exists users_update_authenticated on public.users;
+
+drop policy if exists users_select_scoped on public.users;
+create policy users_select_scoped on public.users
   for select
   to authenticated
-  using (true);
+  using (
+    public.is_super_admin()
+    or (agency_id = public.my_agency_id() and campaign_id = public.my_campaign_id())
+  );
 
-drop policy if exists users_insert_authenticated on public.users;
-create policy users_insert_authenticated on public.users
+drop policy if exists users_insert_scoped on public.users;
+create policy users_insert_scoped on public.users
   for insert
   to authenticated
-  with check (true);
+  with check (
+    public.is_super_admin()
+    or (agency_id = public.my_agency_id() and campaign_id = public.my_campaign_id())
+  );
 
-drop policy if exists users_update_authenticated on public.users;
-create policy users_update_authenticated on public.users
+drop policy if exists users_update_scoped on public.users;
+create policy users_update_scoped on public.users
   for update
   to authenticated
-  using (true)
-  with check (true);
+  using (
+    public.is_super_admin()
+    or (agency_id = public.my_agency_id() and campaign_id = public.my_campaign_id())
+  )
+  with check (
+    public.is_super_admin()
+    or (agency_id = public.my_agency_id() and campaign_id = public.my_campaign_id())
+  );
 
 -- ----------------------------------------------------------------------------
 -- Storage buckets for NID Front/Back and User Photo (replacing Google Drive).
 -- ----------------------------------------------------------------------------
--- Both buckets are PRIVATE. Registration (public, no login) still needs to be
--- able to UPLOAD into them - that stays open to `anon`. Reading the files
--- back (admin table avatars, User Details modal, signed download links) now
--- requires a logged-in admin session - the app resolves short-lived signed
--- URLs on demand (see js/db-service.js getSignedDocUrls()), never a
--- permanent public link.
+-- Both buckets are PRIVATE. There is no more public (anon) upload path -
+-- registration now requires a logged-in account, so uploads are
+-- authenticated-only. Reading a file back (admin table avatars, User Details
+-- modal, signed download links) is scoped to the SAME Agency+Campaign as the
+-- `users` row that owns the object path (or Super Admin) - closes the gap
+-- where any logged-in session could otherwise sign a URL for ANY object by
+-- path, regardless of which campaign it belonged to. The app resolves
+-- short-lived signed URLs on demand (see js/db-service.js getSignedDocUrls()),
+-- never a permanent public link.
 update storage.buckets set public = false where id = 'user-photos';
 insert into storage.buckets (id, name, public)
 values ('user-photos', 'user-photos', false)
@@ -241,52 +568,100 @@ insert into storage.buckets (id, name, public)
 values ('nid-documents', 'nid-documents', false)
 on conflict (id) do nothing;
 
+-- Indexes backing the ownership-lookup subqueries in the scoped SELECT
+-- policies below - each policy check does an `exists (select 1 from users
+-- where <url column> = storage.objects.name and ...)`, so these keep that
+-- lookup fast instead of a sequential scan per signed-URL request.
+create index if not exists idx_users_user_photo_url on public.users (user_photo_url);
+create index if not exists idx_users_nid_front_url  on public.users (nid_front_url);
+create index if not exists idx_users_nid_back_url   on public.users (nid_back_url);
+
 drop policy if exists user_photos_public_read on storage.objects;
 drop policy if exists user_photos_anon_upload on storage.objects;
 drop policy if exists nid_documents_anon_select on storage.objects;
 drop policy if exists nid_documents_anon_upload on storage.objects;
-
 drop policy if exists user_photos_authenticated_select on storage.objects;
-create policy user_photos_authenticated_select on storage.objects
+drop policy if exists nid_documents_authenticated_select on storage.objects;
+
+drop policy if exists user_photos_scoped_select on storage.objects;
+create policy user_photos_scoped_select on storage.objects
   for select
   to authenticated
-  using (bucket_id = 'user-photos');
+  using (
+    bucket_id = 'user-photos'
+    and (
+      public.is_super_admin()
+      or exists (
+        select 1 from public.users u
+        where u.user_photo_url = storage.objects.name
+          and u.agency_id = public.my_agency_id()
+          and u.campaign_id = public.my_campaign_id()
+      )
+    )
+  );
 
 drop policy if exists user_photos_upload on storage.objects;
 create policy user_photos_upload on storage.objects
   for insert
-  to anon, authenticated
+  to authenticated
   with check (bucket_id = 'user-photos');
 
-drop policy if exists nid_documents_authenticated_select on storage.objects;
-create policy nid_documents_authenticated_select on storage.objects
+drop policy if exists nid_documents_scoped_select on storage.objects;
+create policy nid_documents_scoped_select on storage.objects
   for select
   to authenticated
-  using (bucket_id = 'nid-documents');
+  using (
+    bucket_id = 'nid-documents'
+    and (
+      public.is_super_admin()
+      or exists (
+        select 1 from public.users u
+        where (u.nid_front_url = storage.objects.name or u.nid_back_url = storage.objects.name)
+          and u.agency_id = public.my_agency_id()
+          and u.campaign_id = public.my_campaign_id()
+      )
+    )
+  );
 
 drop policy if exists nid_documents_upload on storage.objects;
 create policy nid_documents_upload on storage.objects
   for insert
-  to anon, authenticated
+  to authenticated
   with check (bucket_id = 'nid-documents');
 
 -- ----------------------------------------------------------------------------
--- Public-safe RPC functions
+-- Tenant-scoped RPC functions
 -- ----------------------------------------------------------------------------
--- The `users` table itself is now locked to `authenticated` (see RLS above),
--- but three actions must still work with NO login: submitting the
--- registration form, checking for a duplicate Mobile/NID before submitting,
--- and populating the "Report To" picker. Each function below is SECURITY
--- DEFINER (runs as the table owner, bypassing RLS) but returns/accepts only
--- the minimum needed for that one action - never full records, NID numbers,
--- mobile numbers, or photos.
+-- Authenticated-only (there is no more public/anon surface anywhere in this
+-- app). Registration, duplicate-checking, and Report To candidate lookup all
+-- go through these three SECURITY DEFINER functions rather than direct table
+-- access so that, for a non-Super-Admin account, the caller's Agency+Campaign
+-- scope can be resolved server-side from account_profiles and NEVER trusted
+-- from client-supplied parameters - see the comment on each function below.
+-- This is defense in depth on top of the `users`/Storage RLS policies above,
+-- which enforce the same scoping as the ultimate backstop either way.
 
--- Returns whether a Mobile/NID is already in use, without exposing any other
--- row data. `p_exclude_code` lets the (authenticated-only) admin Edit modal
+-- Returns whether a Mobile/NID is already in use WITHIN THE SAME AGENCY+CAMPAIGN,
+-- without exposing any other row data. The same person CAN legitimately be
+-- registered under a different Agency+Campaign - only an exact Agency+Campaign+
+-- Mobile/NID repeat is a duplicate. `p_exclude_code` lets the admin Edit modal
 -- reuse this same check while editing an existing user.
+--
+-- Now authenticated-only (anon revoked - there is no more public registration).
+-- For a non-Super-Admin caller, the Agency+Campaign scope is ALWAYS resolved
+-- server-side from account_profiles via auth.uid() - the p_agency_id/
+-- p_campaign_id arguments are silently ignored for that caller, never
+-- trusted, even though they're still accepted as parameters (Super Admin
+-- callers, who have no fixed scope of their own, use them as explicit
+-- filters). This is defense in depth on top of the RLS policies on `users`
+-- itself, which would reject a mismatched insert/select regardless.
+drop function if exists public.check_duplicate_public(text, text, text);
+
 create or replace function public.check_duplicate_public(
   p_mobile text,
   p_nid text,
+  p_agency_id uuid,
+  p_campaign_id uuid,
   p_exclude_code text default null
 )
 returns jsonb
@@ -298,27 +673,50 @@ declare
   clean_mobile text := nullif(trim(p_mobile), '');
   clean_nid text := nullif(trim(p_nid), '');
   hit_code text;
+  v_caller_role text;
+  v_caller_status text;
+  v_agency_id uuid;
+  v_campaign_id uuid;
 begin
+  select role, status, agency_id, campaign_id into v_caller_role, v_caller_status, v_agency_id, v_campaign_id
+    from public.account_profiles where id = auth.uid();
+
+  if v_caller_role is null then
+    v_caller_role := 'super_admin'; -- no profile row = legacy Super Admin bootstrap rule
+  elsif v_caller_status <> 'Active' then
+    raise exception 'Your account is not active. Contact your administrator.';
+  end if;
+
+  if v_caller_role = 'super_admin' then
+    v_agency_id := p_agency_id;
+    v_campaign_id := p_campaign_id;
+  end if;
+  -- else: v_agency_id/v_campaign_id already hold the caller's own scope from the lookup above.
+
   if clean_mobile is not null then
     select user_code into hit_code from public.users
-      where mobile = clean_mobile and (p_exclude_code is null or user_code <> p_exclude_code)
+      where mobile = clean_mobile
+        and agency_id = v_agency_id and campaign_id = v_campaign_id
+        and (p_exclude_code is null or user_code <> p_exclude_code)
       limit 1;
     if hit_code is not null then
       return jsonb_build_object(
         'duplicate', true, 'field', 'Mobile Number',
-        'message', format('A user with Mobile Number ''%s'' already exists.', clean_mobile)
+        'message', format('This user (Mobile Number ''%s'') is already registered for this campaign.', clean_mobile)
       );
     end if;
   end if;
 
   if clean_nid is not null then
     select user_code into hit_code from public.users
-      where nid = clean_nid and (p_exclude_code is null or user_code <> p_exclude_code)
+      where nid = clean_nid
+        and agency_id = v_agency_id and campaign_id = v_campaign_id
+        and (p_exclude_code is null or user_code <> p_exclude_code)
       limit 1;
     if hit_code is not null then
       return jsonb_build_object(
         'duplicate', true, 'field', 'NID Number',
-        'message', format('A user with NID Number ''%s'' already exists.', clean_nid)
+        'message', format('This user (NID Number ''%s'') is already registered for this campaign.', clean_nid)
       );
     end if;
   end if;
@@ -327,34 +725,79 @@ begin
 end;
 $$;
 
-grant execute on function public.check_duplicate_public(text, text, text) to anon, authenticated;
+grant execute on function public.check_duplicate_public(text, text, uuid, uuid, text) to authenticated;
+revoke execute on function public.check_duplicate_public(text, text, uuid, uuid, text) from anon;
 
--- Report To candidates for a given target designation (Active, matching
--- designation/role only) - just enough (id/user_code/name) to power the
--- searchable picker on both the public Create form and the admin Edit modal.
-create or replace function public.get_report_to_candidates(p_designation text)
+-- Report To candidates for a given target designation, scoped to a specific
+-- Agency+Campaign (Active, matching designation/role, same Agency+Campaign
+-- as the submitting user only) - just enough (id/user_code/name) to power
+-- the searchable picker on both the Create form and the admin Edit modal.
+-- A BP in Campaign A must never see a Supervisor from Campaign B, even under
+-- the same Agency.
+--
+-- Now authenticated-only (anon revoked). Uses `language plpgsql` (not the
+-- original `sql`) so it can resolve the caller's own scope from
+-- account_profiles first - same non-super-admin-never-trusts-the-arguments
+-- rule as check_duplicate_public() above.
+drop function if exists public.get_report_to_candidates(text);
+
+create or replace function public.get_report_to_candidates(
+  p_designation text,
+  p_agency_id uuid,
+  p_campaign_id uuid
+)
 returns table (user_id uuid, user_code text, name text)
-language sql
+language plpgsql
 security definer
-set search_path = public
 stable
+set search_path = public
 as $$
-  select id, user_code, name
-  from public.users
-  where status = 'Active'
-    and designation = p_designation
-    and role = p_designation
-  order by name asc;
+declare
+  v_caller_role text;
+  v_caller_status text;
+  v_agency_id uuid;
+  v_campaign_id uuid;
+begin
+  select role, status, agency_id, campaign_id into v_caller_role, v_caller_status, v_agency_id, v_campaign_id
+    from public.account_profiles where id = auth.uid();
+
+  if v_caller_role is null then
+    v_caller_role := 'super_admin';
+  elsif v_caller_status <> 'Active' then
+    raise exception 'Your account is not active. Contact your administrator.';
+  end if;
+
+  if v_caller_role = 'super_admin' then
+    v_agency_id := p_agency_id;
+    v_campaign_id := p_campaign_id;
+  end if;
+
+  return query
+    select u.id, u.user_code, u.name
+    from public.users u
+    where u.status = 'Active'
+      and u.designation = p_designation
+      and u.role = p_designation
+      and u.agency_id = v_agency_id
+      and u.campaign_id = v_campaign_id
+    order by u.name asc;
+end;
 $$;
 
-grant execute on function public.get_report_to_candidates(text) to anon, authenticated;
+grant execute on function public.get_report_to_candidates(text, uuid, uuid) to authenticated;
+revoke execute on function public.get_report_to_candidates(text, uuid, uuid) from anon;
 
--- Performs the full public registration write (duplicate check + Report To
+-- Performs the full user-registration write (duplicate check + Report To
 -- resolution + insert) atomically and returns the created row shaped like
--- `users_with_report_to`, so the anon key never needs direct table access to
--- register a user or read back the row it just created. Storage uploads
--- (User Photo/NID images) still happen client-side beforehand (see
--- db-service.js createUser()) - only their resulting paths are passed in.
+-- `users_with_report_to`. Authenticated-only (anon revoked - there is no more
+-- public registration). For a non-Super-Admin caller, agency_id/campaign_id
+-- are ALWAYS resolved server-side from account_profiles via auth.uid() -
+-- `p->>'agencyId'`/`p->>'campaignId'` are silently ignored for that caller,
+-- never trusted, even though the app still sends them for a Super Admin
+-- caller's benefit (who has no fixed scope of their own). This mirrors
+-- check_duplicate_public()/get_report_to_candidates() above, and is defense
+-- in depth on top of the `users` INSERT RLS policy, which would reject a
+-- mismatched agency_id/campaign_id regardless.
 create or replace function public.register_user(p jsonb)
 returns jsonb
 language plpgsql
@@ -366,13 +809,49 @@ declare
   v_nid text := trim(p->>'nid');
   v_designation text := p->>'designation';
   v_role text := p->>'role';
+  v_agency_id uuid;
+  v_campaign_id uuid;
   v_report_to_name text := nullif(trim(p->>'reportTo'), '');
   v_target_designation text;
   v_report_to_id uuid;
   v_row public.users%rowtype;
   v_dup jsonb;
+  v_campaign_agency_id uuid;
+  v_caller_role text;
+  v_caller_status text;
+  v_caller_agency_id uuid;
+  v_caller_campaign_id uuid;
+  v_actor text;
 begin
-  v_dup := public.check_duplicate_public(v_mobile, v_nid, null);
+  select role, status, agency_id, campaign_id into v_caller_role, v_caller_status, v_caller_agency_id, v_caller_campaign_id
+    from public.account_profiles where id = auth.uid();
+
+  if v_caller_role is null then
+    v_caller_role := 'super_admin'; -- no profile row = legacy Super Admin bootstrap rule
+  elsif v_caller_status <> 'Active' then
+    raise exception 'Your account is not active. Contact your administrator.';
+  end if;
+
+  if v_caller_role = 'super_admin' then
+    v_agency_id := (p->>'agencyId')::uuid;
+    v_campaign_id := (p->>'campaignId')::uuid;
+  else
+    v_agency_id := v_caller_agency_id;
+    v_campaign_id := v_caller_campaign_id;
+  end if;
+
+  v_actor := coalesce(auth.jwt()->>'email', 'Unknown Account');
+
+  if v_agency_id is null or v_campaign_id is null then
+    raise exception 'Agency and Campaign are required.';
+  end if;
+
+  select agency_id into v_campaign_agency_id from public.campaigns where id = v_campaign_id;
+  if v_campaign_agency_id is null or v_campaign_agency_id <> v_agency_id then
+    raise exception 'Selected Campaign does not belong to the selected Agency.';
+  end if;
+
+  v_dup := public.check_duplicate_public(v_mobile, v_nid, v_agency_id, v_campaign_id, null);
   if (v_dup->>'duplicate')::boolean then
     raise exception '%', v_dup->>'message';
   end if;
@@ -392,9 +871,11 @@ begin
         and designation = v_target_designation
         and role = v_target_designation
         and status = 'Active'
+        and agency_id = v_agency_id
+        and campaign_id = v_campaign_id
       limit 1;
     if v_report_to_id is null then
-      raise exception 'Report To must be an existing, active %.', v_target_designation;
+      raise exception 'Report To must be an existing, active % within the same Agency and Campaign.', v_target_designation;
     end if;
   elsif v_report_to_name is not null then
     raise exception 'FC users must not have a Report To.';
@@ -403,7 +884,8 @@ begin
   insert into public.users (
     name, gender, father_name, mother_name, mobile, email, dob,
     division, district, upazila, thana, designation, role, report_to_id,
-    nid, nid_front_url, nid_back_url, user_photo_url, status, created_by, updated_by
+    nid, nid_front_url, nid_back_url, user_photo_url, status,
+    agency_id, campaign_id, created_by, updated_by
   ) values (
     p->>'name', p->>'gender', p->>'fatherName', p->>'motherName', v_mobile, p->>'email',
     (p->>'dob')::date,
@@ -413,7 +895,7 @@ begin
     coalesce((select array_agg(x) from jsonb_array_elements_text(coalesce(p->'thana', '[]'::jsonb)) x), '{}'),
     v_designation, v_role, v_report_to_id,
     v_nid, p->>'nidFrontUrl', p->>'nidBackUrl', p->>'userPhotoUrl',
-    'Active', 'Self (Public Registration)', 'Self (Public Registration)'
+    'Active', v_agency_id, v_campaign_id, v_actor, v_actor
   )
   returning * into v_row;
 
@@ -425,24 +907,37 @@ begin
     'report_to_id', v_row.report_to_id, 'report_to_name', v_report_to_name,
     'nid', v_row.nid, 'nid_front_url', v_row.nid_front_url, 'nid_back_url', v_row.nid_back_url,
     'user_photo_url', v_row.user_photo_url, 'status', v_row.status,
+    'agency_id', v_row.agency_id, 'campaign_id', v_row.campaign_id,
     'created_by', v_row.created_by, 'created_date', v_row.created_date,
     'updated_by', v_row.updated_by, 'updated_date', v_row.updated_date
   );
 end;
 $$;
 
-grant execute on function public.register_user(jsonb) to anon, authenticated;
+grant execute on function public.register_user(jsonb) to authenticated;
+revoke execute on function public.register_user(jsonb) from anon;
 
 -- ----------------------------------------------------------------------------
 -- Convenience view: users with their Report To person's name pre-joined, so
 -- the frontend can display "Report To" as a name without a second round-trip
 -- or a client-side join against the full user list.
 -- ----------------------------------------------------------------------------
-create or replace view public.users_with_report_to
+-- DROP + CREATE rather than CREATE OR REPLACE: `u.*` now includes the new
+-- agency_id/campaign_id columns (appended to `users` earlier in this script),
+-- which shifts report_to_name/report_to_code's output position - Postgres
+-- refuses a CREATE OR REPLACE VIEW that reorders/renames existing output
+-- columns, so the view must be dropped and recreated fresh instead.
+drop view if exists public.users_with_report_to;
+
+create view public.users_with_report_to
   with (security_invoker = true) as
 select
   u.*,
   r.name       as report_to_name,
-  r.user_code  as report_to_code
+  r.user_code  as report_to_code,
+  ag.name      as agency_name,
+  ca.name      as campaign_name
 from public.users u
-left join public.users r on r.id = u.report_to_id;
+left join public.users r on r.id = u.report_to_id
+left join public.agencies ag on ag.id = u.agency_id
+left join public.campaigns ca on ca.id = u.campaign_id;

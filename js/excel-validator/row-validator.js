@@ -269,6 +269,40 @@
   }
 
   /* ---------------------------------------------------------------------
+     Agency -> Campaign - same top-down, scoped-candidate-pool, parent-
+     inference shape as the Location hierarchy below (just 2 levels instead
+     of 4). Only Active Agencies/Campaigns are ever offered as match targets
+     (see buildAgencyCampaignIndex in master-index.js).
+     --------------------------------------------------------------------- */
+  function matchAgencyCampaignHierarchy(raw) {
+    const idx = window.getAgencyCampaignIndex();
+    const cfg = window.EXCEL_VALIDATOR_CONFIG;
+    const out = {};
+
+    // Agency
+    const agencyMatch = matchLevel(raw.agency, idx.agencies);
+    out.agency = toFieldResult(raw.agency, agencyMatch, 'Agency');
+    let effAgency = (!agencyMatch.empty && agencyMatch.matched && agencyMatch.score >= cfg.REVIEW_MIN) ? agencyMatch.matched : null;
+
+    // Campaign - scoped to Agency when known, else the full deduped campaign list
+    let campaignScope = effAgency ? idx.getCampaigns(effAgency) : idx.allCampaignNames;
+    let campaignMatch = matchLevel(raw.campaign, campaignScope);
+
+    if (!effAgency && !campaignMatch.empty && campaignMatch.matched && campaignMatch.score >= cfg.AUTO_FIX_MIN) {
+      const owners = idx.campaignByNameOnly.get(normalizeForMatch(campaignMatch.matched)) || [];
+      if (owners.length === 1) {
+        effAgency = owners[0].agency;
+        out.agency = inferredResult(raw.agency, effAgency, campaignMatch.score, 'Agency', `Campaign "${campaignMatch.matched}"`);
+        campaignScope = idx.getCampaigns(effAgency);
+        campaignMatch = matchLevel(raw.campaign, campaignScope);
+      }
+    }
+    out.campaign = toFieldResult(raw.campaign, campaignMatch, 'Campaign');
+
+    return out;
+  }
+
+  /* ---------------------------------------------------------------------
      Location Hierarchy - Division -> District -> Upazila -> Thana.
      Matches top-down, scoping each level's candidate pool to the already-
      matched parent (fast: only a handful of candidates, not the full
@@ -394,6 +428,11 @@
   function validateRow(mapped) {
     const fields = {};
 
+    if (['agency', 'campaign'].some(f => f in mapped)) {
+      const acResults = matchAgencyCampaignHierarchy({ agency: mapped.agency, campaign: mapped.campaign });
+      Object.assign(fields, acResults);
+    }
+
     if ('name' in mapped) fields.name = correctNameField(mapped.name, 'Name');
     if ('fatherName' in mapped) fields.fatherName = correctNameField(mapped.fatherName, "Father's Name");
     if ('motherName' in mapped) fields.motherName = correctNameField(mapped.motherName, "Mother's Name");
@@ -470,6 +509,6 @@
     window.getEffectiveMessage = getEffectiveMessage;
     window.getEffectiveRowStatus = getEffectiveRowStatus;
     window.getEffectiveCorrectionCount = getEffectiveCorrectionCount;
-    window.excelValidatorInternals = { correctNameField, correctMobileField, correctDOBField, correctEnumField, matchLocationHierarchy, parseDOB };
+    window.excelValidatorInternals = { correctNameField, correctMobileField, correctDOBField, correctEnumField, matchLocationHierarchy, matchAgencyCampaignHierarchy, parseDOB };
   }
 })();

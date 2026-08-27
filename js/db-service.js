@@ -43,6 +43,10 @@ function dbRowToUser(row) {
     reportTo: row.report_to_name || '',
     reportToCode: row.report_to_code || '',
     reportToId: row.report_to_id || null,
+    agencyId: row.agency_id || null,
+    campaignId: row.campaign_id || null,
+    agencyName: row.agency_name || '',
+    campaignName: row.campaign_name || '',
     nid: row.nid,
     nidFront: row.nid_front_url || '', // storage PATH (private bucket) - resolve via getSignedDocUrls()
     nidBack: row.nid_back_url || '',   // storage PATH (private bucket)
@@ -113,18 +117,36 @@ function mapDbError(error) {
   const msg = (error.message || '').toLowerCase();
   const detail = (error.details || '').toLowerCase();
   if (error.code === '23505') { // unique_violation
-    if (msg.includes('mobile') || detail.includes('mobile')) {
-      return 'This user already exists in the system (duplicate Mobile Number).';
+    if (msg.includes('mobile_agency_campaign') || msg.includes('mobile')) {
+      return 'This user (Mobile Number) is already registered for this campaign.';
     }
-    if (msg.includes('nid') || detail.includes('nid')) {
-      return 'This user already exists in the system (duplicate NID Number).';
+    if (msg.includes('nid_agency_campaign') || msg.includes('nid')) {
+      return 'This user (NID Number) is already registered for this campaign.';
     }
     if (msg.includes('user_code')) {
       return 'A duplicate User ID was generated - please try again.';
     }
-    return 'This user already exists in the system (duplicate record).';
+    if (msg.includes('campaigns_agency_name_unique')) {
+      return 'A Campaign with this name already exists for this Agency.';
+    }
+    if (msg.includes('agencies_name_key') || (msg.includes('agencies') && msg.includes('name'))) {
+      return 'An Agency with this name already exists.';
+    }
+    if (msg.includes('account_profiles_pkey') || (msg.includes('account_profiles') && msg.includes('pkey'))) {
+      return 'This account is already linked to a login profile.';
+    }
+    return 'This record already exists in the system (duplicate).';
+  }
+  if (error.code === '23503') { // foreign_key_violation
+    if (msg.includes('account_profiles')) {
+      return 'That User ID was not found. Copy it from Supabase Dashboard -> Authentication -> Users first.';
+    }
+    return 'This action references a record that no longer exists.';
   }
   if (error.code === '23514') { // check_violation
+    if (msg.includes('account_profiles_scope_check')) {
+      return 'Super Admin accounts must not have an Agency/Campaign; Agency Admin accounts must have both.';
+    }
     return 'One or more fields failed validation (invalid format).';
   }
   if (error.code === 'P0001') {
@@ -187,19 +209,25 @@ const dbService = {
 
   /**
    * Report To candidates for a target designation (e.g. "Supervisor" when the
-   * form's Designation is "BP"). Only Active, designation===role rows -
-   * mirrors the old validateDesignationRoleReportTo_ hierarchy rule.
+   * form's Designation is "BP"), scoped to a specific Agency+Campaign - a BP
+   * in Campaign A must never see a Supervisor from Campaign B, even under the
+   * same Agency. Only Active, designation===role rows within that Agency+
+   * Campaign - mirrors the old validateDesignationRoleReportTo_ hierarchy rule.
    * `excludeUserCode` lets the Edit modal avoid offering a user as their own
    * Report To. Goes through the get_report_to_candidates() SECURITY DEFINER
-   * RPC (see supabase/schema.sql) instead of a direct table select, so this
-   * still works with no login (used by the public Create form) even though
-   * the `users` table itself is locked to authenticated-only.
+   * RPC (see supabase/schema.sql), which for a non-Super-Admin account
+   * silently ignores `agencyId`/`campaignId` here and resolves the caller's
+   * own scope server-side instead - these are only honored for Super Admin.
    */
-  async getReportToUsers(targetDesignation, excludeUserCode = null) {
-    if (!targetDesignation) return [];
+  async getReportToUsers(targetDesignation, agencyId, campaignId, excludeUserCode = null) {
+    if (!targetDesignation || !agencyId || !campaignId) return [];
     const sb = requireClient();
     const { data } = await run(
-      sb.rpc('get_report_to_candidates', { p_designation: targetDesignation }),
+      sb.rpc('get_report_to_candidates', {
+        p_designation: targetDesignation,
+        p_agency_id: agencyId,
+        p_campaign_id: campaignId
+      }),
       'Failed to load Report To options.'
     );
     return (data || [])
@@ -210,16 +238,22 @@ const dbService = {
   /**
    * Authoritative duplicate check (mobile/NID), run against the database -
    * not a possibly-stale in-memory cache - right before insert/update, same
-   * as the old findDuplicateUser_ safeguard in Code.gs. Goes through the
-   * check_duplicate_public() SECURITY DEFINER RPC so it works with no login
-   * (the public Create form uses this) without exposing table SELECT.
+   * as the old findDuplicateUser_ safeguard in Code.gs. Scoped to a specific
+   * Agency+Campaign: the same person CAN legitimately be registered under a
+   * different Agency+Campaign - only an exact Agency+Campaign+Mobile/NID
+   * repeat is a duplicate. Goes through the check_duplicate_public()
+   * SECURITY DEFINER RPC, which for a non-Super-Admin account silently
+   * ignores `agencyId`/`campaignId` here and resolves the caller's own scope
+   * server-side instead - never trusts the frontend for that role.
    */
-  async checkDuplicate(mobile, nid, excludeUserCode = null) {
+  async checkDuplicate(mobile, nid, agencyId, campaignId, excludeUserCode = null) {
     const sb = requireClient();
     const { data } = await run(
       sb.rpc('check_duplicate_public', {
         p_mobile: mobile || null,
         p_nid: nid || null,
+        p_agency_id: agencyId || null,
+        p_campaign_id: campaignId || null,
         p_exclude_code: excludeUserCode || null
       }),
       'Failed to check for duplicates.'
@@ -229,9 +263,10 @@ const dbService = {
 
   /**
    * Uploads a File to Supabase Storage. Both `user-photos` and
-   * `nid-documents` are PRIVATE buckets - anon may still INSERT (registration
-   * is public), but reading them back requires an authenticated session, so
-   * this always returns the object PATH (not a URL); callers resolve a path
+   * `nid-documents` are PRIVATE buckets, authenticated-only for both upload
+   * and read; reading requires the caller's own Agency+Campaign to match the
+   * owning user's (see the Storage RLS policies in supabase/schema.sql), so
+   * this always returns the object PATH (not a URL) - callers resolve a path
    * to a signed URL via getSignedDocUrls()/resolveUserPhoto() on demand.
    */
   async uploadImage(bucket, userCode, fieldName, file) {
@@ -283,15 +318,18 @@ const dbService = {
    * image upload, so a rejected submission never wastes Storage on images
    * that end up discarded. The actual duplicate check + Report To resolution
    * + insert happens atomically inside register_user() (a SECURITY DEFINER
-   * RPC - see supabase/schema.sql), since the `users` table itself is locked
-   * to authenticated-only and this form is public/no-login.
+   * RPC - see supabase/schema.sql), which for a non-Super-Admin account
+   * silently ignores `userData.agencyId`/`campaignId` and resolves the
+   * caller's own permanent scope server-side instead - the frontend never
+   * gets to choose it for that role (see js/app.js's Add User form, which
+   * doesn't even offer an Agency/Campaign picker to that role).
    */
   async createUser(userData, files) {
     const sb = requireClient();
     const mobile = String(userData.mobile || '').trim();
     const nid = String(userData.nid || '').trim();
 
-    const dup = await this.checkDuplicate(mobile, nid);
+    const dup = await this.checkDuplicate(mobile, nid, userData.agencyId, userData.campaignId);
     if (dup.duplicate) throw new Error(dup.message);
 
     // A temporary code for the image path prefix - the final user_code is
@@ -325,7 +363,9 @@ const dbService = {
           nid,
           nidFrontUrl: nidFrontPath,
           nidBackUrl: nidBackPath,
-          userPhotoUrl
+          userPhotoUrl,
+          agencyId: userData.agencyId,
+          campaignId: userData.campaignId
         }
       }),
       'Failed to create user.'
@@ -338,8 +378,16 @@ const dbService = {
    * reportTo). `updatedFields` uses the same camelCase keys as the app's
    * user object. Looked up and updated by user_code (the app-facing id),
    * not the internal uuid, so callers never need to know about `_pk`.
+   *
+   * Agency/Campaign are NOT editable here (reassigning a person to a
+   * different campaign would silently change headcount/reporting elsewhere -
+   * that should be a deliberate separate action if ever needed, not a side
+   * effect of a Quick Edit). `agencyId`/`campaignId` are the user's EXISTING,
+   * unchanged values (passed in by the caller from the already-loaded row),
+   * used only to keep the duplicate-check and Report To candidate lookup
+   * correctly scoped.
    */
-  async updateUser(userCode, updatedFields) {
+  async updateUser(userCode, updatedFields, agencyId, campaignId) {
     const sb = requireClient();
     const patch = {};
 
@@ -349,7 +397,7 @@ const dbService = {
     if (updatedFields.role !== undefined) patch.role = updatedFields.role;
 
     if (patch.mobile !== undefined) {
-      const dup = await this.checkDuplicate(patch.mobile, null, userCode);
+      const dup = await this.checkDuplicate(patch.mobile, null, agencyId, campaignId, userCode);
       if (dup.duplicate) throw new Error(dup.message);
     }
 
@@ -362,7 +410,11 @@ const dbService = {
         throw new Error(`Please select a valid ${targetDesignation} to report to.`);
       } else {
         const { data: candidates } = await run(
-          sb.rpc('get_report_to_candidates', { p_designation: targetDesignation }),
+          sb.rpc('get_report_to_candidates', {
+            p_designation: targetDesignation,
+            p_agency_id: agencyId,
+            p_campaign_id: campaignId
+          }),
           'Failed to validate Report To.'
         );
         const target = (candidates || []).find(c => c.name === updatedFields.reportTo);
@@ -392,6 +444,177 @@ const dbService = {
       'Failed to update status.'
     );
     return newStatus;
+  },
+
+  /** All Agencies (Active only unless includeInactive) - low-sensitivity master data, readable by any logged-in account. */
+  async getAgencies(includeInactive = false) {
+    const sb = requireClient();
+    let query = sb.from('agencies').select('*').order('name', { ascending: true });
+    if (!includeInactive) query = query.eq('status', 'Active');
+    const { data } = await run(query, 'Failed to load Agencies.');
+    return data || [];
+  },
+
+  /** Campaigns, optionally scoped to one Agency (Active only unless includeInactive). */
+  async getCampaigns(agencyId = null, includeInactive = false) {
+    const sb = requireClient();
+    let query = sb.from('campaigns').select('*').order('name', { ascending: true });
+    if (agencyId) query = query.eq('agency_id', agencyId);
+    if (!includeInactive) query = query.eq('status', 'Active');
+    const { data } = await run(query, 'Failed to load Campaigns.');
+    return data || [];
+  },
+
+  async createAgency(name) {
+    const sb = requireClient();
+    const identity = await getCurrentAdminIdentity();
+    const { data } = await run(
+      sb.from('agencies').insert({ name: name.trim(), created_by: identity, updated_by: identity }).select().single(),
+      'Failed to create Agency.'
+    );
+    return data;
+  },
+
+  async updateAgency(id, fields) {
+    const sb = requireClient();
+    const patch = { updated_by: await getCurrentAdminIdentity() };
+    if (fields.name !== undefined) patch.name = fields.name.trim();
+    if (fields.status !== undefined) patch.status = fields.status;
+    const { data } = await run(
+      sb.from('agencies').update(patch).eq('id', id).select().single(),
+      'Failed to update Agency.'
+    );
+    return data;
+  },
+
+  async createCampaign(agencyId, name) {
+    const sb = requireClient();
+    const identity = await getCurrentAdminIdentity();
+    const { data } = await run(
+      sb.from('campaigns').insert({ agency_id: agencyId, name: name.trim(), created_by: identity, updated_by: identity }).select().single(),
+      'Failed to create Campaign.'
+    );
+    return data;
+  },
+
+  async updateCampaign(id, fields) {
+    const sb = requireClient();
+    const patch = { updated_by: await getCurrentAdminIdentity() };
+    if (fields.name !== undefined) patch.name = fields.name.trim();
+    if (fields.agencyId !== undefined) patch.agency_id = fields.agencyId;
+    if (fields.status !== undefined) patch.status = fields.status;
+    const { data } = await run(
+      sb.from('campaigns').update(patch).eq('id', id).select().single(),
+      'Failed to update Campaign.'
+    );
+    return data;
+  },
+
+  /**
+   * Backs the 5 Dashboard KPI cards (Total Users/BP/Supervisor/FC, Active
+   * Campaigns) - small `count`-only queries (head:true - never fetches rows),
+   * scoped by whatever Agency/Campaign filter is currently selected, same as
+   * every other admin view per the "Agency+Campaign is a first-class filter
+   * everywhere" rule.
+   */
+  async getDashboardCounts(opts = {}) {
+    const sb = requireClient();
+    const countQuery = (extra = {}) => {
+      let query = sb.from(USERS_VIEW).select('*', { count: 'exact', head: true });
+      query = applyFilters(query, { ...opts, ...extra });
+      return query;
+    };
+
+    const [totalRes, bpRes, supRes, fcRes] = await Promise.all([
+      run(countQuery(), 'Failed to load Total Users count.'),
+      run(countQuery({ role: 'BP' }), 'Failed to load Total BP count.'),
+      run(countQuery({ role: 'Supervisor' }), 'Failed to load Total Supervisor count.'),
+      run(countQuery({ role: 'FC' }), 'Failed to load Total FC count.')
+    ]);
+
+    let campaignsQuery = sb.from('campaigns').select('*', { count: 'exact', head: true }).eq('status', 'Active');
+    if (opts.agencyId) campaignsQuery = campaignsQuery.eq('agency_id', opts.agencyId);
+    const campaignsRes = await run(campaignsQuery, 'Failed to load Active Campaigns count.');
+
+    return {
+      totalUsers: totalRes.count || 0,
+      totalBP: bpRes.count || 0,
+      totalSupervisor: supRes.count || 0,
+      totalFC: fcRes.count || 0,
+      activeCampaigns: campaignsRes.count || 0
+    };
+  },
+
+  /**
+   * The CURRENT session's own account_profiles row, or `null` if none exists.
+   * No row is not an error - it means "legacy Super Admin" (see is_super_admin()
+   * in supabase/schema.sql) - the caller (js/storage.js loadCurrentAccount())
+   * is what actually applies that bootstrap rule client-side; this function
+   * just reports what's in the database.
+   */
+  async getMyAccountProfile() {
+    const sb = requireClient();
+    const { data: userData, error: userErr } = await sb.auth.getUser();
+    if (userErr || !userData || !userData.user) return null;
+    const { data } = await run(
+      sb.from('account_profiles').select('*').eq('id', userData.user.id).maybeSingle(),
+      'Failed to load your account profile.'
+    );
+    return data || null;
+  },
+
+  /** Every login account - Super-Admin-only (RLS enforces this; a non-Super-Admin caller gets an empty list, not an error). Backs the Campaign Logins management screen. */
+  async getAllAccountProfiles() {
+    const sb = requireClient();
+    const { data } = await run(
+      sb.from('account_profiles').select('*').order('created_date', { ascending: false }),
+      'Failed to load login accounts.'
+    );
+    return data || [];
+  },
+
+  /**
+   * Links an EXISTING Supabase Auth user (identified by its UUID, copied from
+   * Supabase Dashboard -> Authentication -> Users) to a role + Agency+Campaign
+   * scope. Does NOT create the auth account itself - this app never handles a
+   * service_role key client-side, so account creation stays a manual Supabase
+   * Dashboard step (see ReadMe.md "Campaign Logins").
+   */
+  async linkAccountProfile({ userId, username, email, agencyId, campaignId, role, status }) {
+    const sb = requireClient();
+    const identity = await getCurrentAdminIdentity();
+    const row = {
+      id: userId,
+      username: username || null,
+      email: email || null,
+      role,
+      agency_id: role === 'super_admin' ? null : agencyId,
+      campaign_id: role === 'super_admin' ? null : campaignId,
+      status,
+      created_by: identity,
+      updated_by: identity
+    };
+    const { data } = await run(
+      sb.from('account_profiles').insert(row).select().single(),
+      'Failed to link account.'
+    );
+    return data;
+  },
+
+  async updateAccountProfile(id, fields) {
+    const sb = requireClient();
+    const patch = { updated_by: await getCurrentAdminIdentity() };
+    if (fields.username !== undefined) patch.username = fields.username;
+    if (fields.email !== undefined) patch.email = fields.email;
+    if (fields.role !== undefined) patch.role = fields.role;
+    if (fields.agencyId !== undefined) patch.agency_id = fields.role === 'super_admin' ? null : fields.agencyId;
+    if (fields.campaignId !== undefined) patch.campaign_id = fields.role === 'super_admin' ? null : fields.campaignId;
+    if (fields.status !== undefined) patch.status = fields.status;
+    const { data } = await run(
+      sb.from('account_profiles').update(patch).eq('id', id).select().single(),
+      'Failed to update account.'
+    );
+    return data;
   }
 };
 
@@ -412,6 +635,8 @@ function applyFilters(query, opts) {
   if (opts.district) query = query.contains('district', [opts.district]);
   if (opts.upazila) query = query.contains('upazila', [opts.upazila]);
   if (opts.thana) query = query.contains('thana', [opts.thana]);
+  if (opts.agencyId) query = query.eq('agency_id', opts.agencyId);
+  if (opts.campaignId) query = query.eq('campaign_id', opts.campaignId);
   if (opts.designation) query = query.eq('designation', opts.designation);
   if (opts.role) query = query.eq('role', opts.role);
   if (opts.status) query = query.eq('status', opts.status);

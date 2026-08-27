@@ -240,11 +240,26 @@ document.addEventListener('DOMContentLoaded', () => {
 
   els.btnBackToUpload.addEventListener('click', () => setStep('upload'));
 
+  // Agency/Campaign are DB-backed admin-managed master data (unlike the static
+  // BD_LOCATIONS/fixed Role-Designation enum already baked into the page) - this is the
+  // one deliberate, minimal exception to this module's "fully offline" design. app.js
+  // already loads the full Agency/Campaign lists once at startup (see storage.js
+  // loadAgenciesAndCampaigns()) for its own dropdowns/filters, so this reuses that
+  // already-cached data instead of making a fresh network call - genuinely zero extra
+  // requests, and never per-row.
+  function loadAgencyCampaignMasterData() {
+    const agencies = (window.storage && window.storage.getAgencies) ? window.storage.getAgencies() : [];
+    const campaigns = (window.storage && window.storage.getCampaigns) ? window.storage.getCampaigns() : [];
+    window.EXCEL_VALIDATOR_MASTER_DATA = { agencies, campaigns };
+    if (window.resetMasterIndex) window.resetMasterIndex(); // rebuild indexes against the fresh snapshot
+  }
+
   els.btnToValidate.addEventListener('click', () => {
     if (!state.mapping.some(m => m.field)) {
       showToast('Please map at least one column before validating.', 'danger');
       return;
     }
+    loadAgencyCampaignMasterData();
     setStep('validate');
     runValidation();
   });

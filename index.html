@@ -58,24 +58,39 @@
     </div>
     
     <nav class="app-nav">
-      <button type="button" class="nav-tab active" data-view="create-user" id="navCreateUser">
-        📝 User Registration
+      <button type="button" class="nav-tab active" data-view="dashboard" id="navDashboard">
+        📊 Dashboard
+      </button>
+      <button type="button" class="nav-tab" data-view="create-user" id="navCreateUser">
+        📝 Add User
       </button>
       <button type="button" class="nav-tab" data-view="admin-management" id="navAdmin">
-        👥 Admin Dashboard
+        👥 Users
       </button>
-      <button type="button" class="nav-tab" data-view="admin-settings" id="navSettings">
-        ⚙️ System Settings
+      <button type="button" class="nav-tab" data-view="agencies" id="navAgencies">
+        🏢 Agencies
+      </button>
+      <button type="button" class="nav-tab" data-view="campaigns" id="navCampaigns">
+        📣 Campaigns
+      </button>
+      <button type="button" class="nav-tab" data-view="campaign-logins" id="navCampaignLogins">
+        🔑 Campaign Logins
+      </button>
+      <button type="button" class="nav-tab" data-view="export" id="navExport">
+        ⬇️ Export
       </button>
       <button type="button" class="nav-tab" data-view="excel-validator" id="navExcelValidator">
-        📥 Excel Validator
+        ✅ Validation
       </button>
     </nav>
 
-    <!-- Admin Auth Status (Admin Dashboard / System Settings require sign-in) -->
+    <!-- Auth Status - every view requires sign-in now. Shows who's logged in and,
+         for a scoped account, which Agency+Campaign they're working in (so it's
+         always clear which campaign workspace is active - never ambiguous). -->
     <div class="auth-status" id="authStatusBox" style="display:none;">
       <span class="auth-status-icon" aria-hidden="true">🔒</span>
       <span class="auth-status-email" id="authUserEmail"></span>
+      <span class="auth-status-scope" id="authAccountScope"></span>
       <button type="button" id="btnLogout" class="btn btn-outline btn-sm">Logout</button>
     </div>
   </header>
@@ -100,10 +115,51 @@
 
       <form id="userRegistrationForm" class="form-grid" onsubmit="return false;">
 
-        <!-- 1. Personal Information Section -->
+        <!-- 1. Agency & Campaign Section -->
         <div class="form-card">
           <div class="card-header-box">
             <div class="card-step-badge">1</div>
+            <h3>Agency &amp; Campaign</h3>
+          </div>
+
+          <div class="fields-row">
+            <!-- Agency - editable dropdown for Super Admin; locked read-only display for
+                 an agency_admin account (its Agency is fixed and never selectable - see
+                 updateAddUserAgencyCampaignFieldMode() in js/app.js). Both elements always
+                 exist; only one is visible at a time. -->
+            <div class="field-group">
+              <label for="agency">Agency <span class="req-star">*</span></label>
+              <select id="agency" class="form-control" aria-required="true">
+                <option value="">-- Select Agency --</option>
+              </select>
+              <div id="agencyLockedDisplay" class="locked-field" style="display:none;">
+                <span id="agencyLockedText"></span>
+                <span aria-hidden="true">🔒</span>
+              </div>
+              <span class="field-hint">The client agency this registration belongs to</span>
+              <span class="error-message" id="agencyError"></span>
+            </div>
+
+            <!-- Campaign - same editable/locked split as Agency above. -->
+            <div class="field-group">
+              <label for="campaign">Campaign <span class="req-star">*</span></label>
+              <select id="campaign" class="form-control" aria-required="true" disabled>
+                <option value="">-- Select Agency First --</option>
+              </select>
+              <div id="campaignLockedDisplay" class="locked-field" style="display:none;">
+                <span id="campaignLockedText"></span>
+                <span aria-hidden="true">🔒</span>
+              </div>
+              <span class="field-hint">Choices depend on the selected Agency</span>
+              <span class="error-message" id="campaignError"></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 2. Personal Information Section -->
+        <div class="form-card">
+          <div class="card-header-box">
+            <div class="card-step-badge">2</div>
             <h3>Personal Information</h3>
           </div>
 
@@ -182,10 +238,10 @@
           </div>
         </div>
 
-        <!-- 2. Contact Information Section -->
+        <!-- 3. Contact Information Section -->
         <div class="form-card">
           <div class="card-header-box">
-            <div class="card-step-badge">2</div>
+            <div class="card-step-badge">3</div>
             <h3>Contact Information</h3>
           </div>
 
@@ -217,7 +273,7 @@
         <!-- 3. Location Information Section -->
         <div class="form-card">
           <div class="card-header-box">
-            <div class="card-step-badge">3</div>
+            <div class="card-step-badge">4</div>
             <h3>Location Information</h3>
           </div>
 
@@ -263,7 +319,7 @@
         <!-- 4. Employment / Role Information Section -->
         <div class="form-card">
           <div class="card-header-box">
-            <div class="card-step-badge">4</div>
+            <div class="card-step-badge">5</div>
             <h3>Employment / Role Information</h3>
           </div>
 
@@ -313,7 +369,7 @@
         <!-- 5. NID & Documents Section -->
         <div class="form-card">
           <div class="card-header-box">
-            <div class="card-step-badge">5</div>
+            <div class="card-step-badge">6</div>
             <h3>NID &amp; Documents</h3>
           </div>
 
@@ -390,20 +446,23 @@
             <h3>Sign In</h3>
           </div>
 
-          <form id="loginForm" onsubmit="return false;">
+          <!-- A real <form> + type="submit" button (rather than a plain button with a click
+               handler) so the browser recognizes this as an actual login submission - that's
+               what lets it offer to save the password and autofill it next time. -->
+          <form id="loginForm">
             <div class="field-group mb-3">
               <label for="loginEmail">Email <span class="req-star">*</span></label>
               <div class="input-icon-wrap">
                 <svg class="input-icon" aria-hidden="true"><use href="#icon-mail"></use></svg>
-                <input type="email" id="loginEmail" class="form-control" autocomplete="username" aria-required="true" />
+                <input type="email" id="loginEmail" name="email" class="form-control" autocomplete="username" aria-required="true" />
               </div>
             </div>
             <div class="field-group mb-3">
               <label for="loginPassword">Password <span class="req-star">*</span></label>
-              <input type="password" id="loginPassword" class="form-control" autocomplete="current-password" aria-required="true" />
+              <input type="password" id="loginPassword" name="password" class="form-control" autocomplete="current-password" aria-required="true" />
             </div>
             <span class="error-message" id="loginError" style="display:block;margin-bottom:0.75rem;"></span>
-            <button type="button" id="btnLoginSubmit" class="btn btn-primary" style="width:100%;">
+            <button type="submit" id="btnLoginSubmit" class="btn btn-primary" style="width:100%;">
               <span class="btn-spinner" aria-hidden="true"></span>
               <span class="btn-label">🔑 Sign In</span>
             </button>
@@ -433,7 +492,26 @@
           <!-- Global Search Input -->
           <div class="field-group">
             <label for="adminSearchInput">Search Keywords</label>
-            <input type="text" id="adminSearchInput" class="form-control" placeholder="Name, Mobile, NID..." />
+            <input type="text" id="adminSearchInput" class="form-control" placeholder="Name, Mobile, User ID, NID..." />
+          </div>
+
+          <!-- Agency/Campaign Filters - hidden entirely for an agency_admin account (it
+               only ever has one Agency+Campaign, so a filter for it is redundant); shown
+               for Super Admin. Wrapped so js/app.js can toggle both in one call. -->
+          <div id="usersAgencyCampaignFilterGroup" class="agency-campaign-filter-group">
+            <div class="field-group">
+              <label for="filterAgency">Agency</label>
+              <select id="filterAgency" class="form-control">
+                <option value="">All Agencies</option>
+              </select>
+            </div>
+
+            <div class="field-group">
+              <label for="filterCampaign">Campaign</label>
+              <select id="filterCampaign" class="form-control">
+                <option value="">All Campaigns</option>
+              </select>
+            </div>
           </div>
 
           <!-- Division Filter -->
@@ -526,6 +604,8 @@
             <thead>
               <tr>
                 <th>User ID</th>
+                <th>Agency</th>
+                <th>Campaign</th>
                 <th>User Profile</th>
                 <th>Mobile Number</th>
                 <th>Designation</th>
@@ -554,44 +634,244 @@
     </section>
 
     <!-- =========================================================================
-         VIEW 3: Admin Settings View (Role & Designation Config)
+         VIEW: Dashboard (summary KPI cards, Agency/Campaign scoped)
          ========================================================================= -->
-    <section id="view-admin-settings" class="view-section">
+    <section id="view-dashboard" class="view-section">
       <div class="page-title-box">
-        <h2>System Settings &amp; Configuration</h2>
-        <p>Manage dynamic Designation options, predefined Roles, and system data maintenance.</p>
+        <h2>Dashboard</h2>
+        <p>Live summary counts, scoped to the selected Agency/Campaign.</p>
+      </div>
+
+      <div class="filter-bar-grid" id="dashboardFilterBar">
+        <div class="filter-bar-header">
+          <h4>Filter Summary</h4>
+        </div>
+        <div id="dashboardAgencyCampaignFilterGroup" class="agency-campaign-filter-group">
+          <div class="field-group">
+            <label for="dashFilterAgency">Agency</label>
+            <select id="dashFilterAgency" class="form-control">
+              <option value="">All Agencies</option>
+            </select>
+          </div>
+          <div class="field-group">
+            <label for="dashFilterCampaign">Campaign</label>
+            <select id="dashFilterCampaign" class="form-control">
+              <option value="">All Campaigns</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="kpi-grid">
+        <div class="dashboard-card kpi-tile">
+          <div class="kpi-value" id="kpiTotalUsers">0</div>
+          <div class="kpi-label">Total Users</div>
+        </div>
+        <div class="dashboard-card kpi-tile">
+          <div class="kpi-value" id="kpiTotalBP">0</div>
+          <div class="kpi-label">Total BP</div>
+        </div>
+        <div class="dashboard-card kpi-tile">
+          <div class="kpi-value" id="kpiTotalSupervisor">0</div>
+          <div class="kpi-label">Total Supervisors</div>
+        </div>
+        <div class="dashboard-card kpi-tile">
+          <div class="kpi-value" id="kpiTotalFC">0</div>
+          <div class="kpi-label">Total FC</div>
+        </div>
+        <div class="dashboard-card kpi-tile">
+          <div class="kpi-value" id="kpiActiveCampaigns">0</div>
+          <div class="kpi-label">Active Campaigns</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- =========================================================================
+         VIEW: Agencies (master data management)
+         ========================================================================= -->
+    <section id="view-agencies" class="view-section">
+      <div class="page-title-box">
+        <h2>Agencies</h2>
+        <p>Manage the client Agencies that Campaigns and user registrations belong to.</p>
+      </div>
+
+      <div class="dashboard-card">
+        <div class="filter-bar-grid">
+          <div class="filter-bar-header">
+            <h4>All Agencies</h4>
+            <button type="button" id="btnAddAgency" class="btn btn-primary btn-sm">+ Add Agency</button>
+          </div>
+        </div>
+
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
+              <tr><th>Name</th><th>Status</th><th>Created Date</th><th>Actions</th></tr>
+            </thead>
+            <tbody id="agenciesTableBody">
+              <!-- Dynamically Populated -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- =========================================================================
+         VIEW: Campaigns (master data management, dependent on Agency)
+         ========================================================================= -->
+    <section id="view-campaigns" class="view-section">
+      <div class="page-title-box">
+        <h2>Campaigns</h2>
+        <p>Manage Campaigns - each Campaign belongs to exactly one Agency.</p>
+      </div>
+
+      <div class="dashboard-card">
+        <div class="filter-bar-grid">
+          <div class="filter-bar-header">
+            <h4>All Campaigns</h4>
+            <button type="button" id="btnAddCampaign" class="btn btn-primary btn-sm">+ Add Campaign</button>
+          </div>
+          <div class="field-group">
+            <label for="campaignsFilterAgency">Filter by Agency</label>
+            <select id="campaignsFilterAgency" class="form-control">
+              <option value="">All Agencies</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
+              <tr><th>Campaign Name</th><th>Agency</th><th>Status</th><th>Created Date</th><th>Actions</th></tr>
+            </thead>
+            <tbody id="campaignsTableBody">
+              <!-- Dynamically Populated -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- =========================================================================
+         VIEW: Campaign Logins (Super Admin only) - links an existing Supabase Auth
+         account to a role + permanent Agency+Campaign scope. Does NOT create the auth
+         account itself (see ReadMe.md "Campaign Logins") - that stays a manual step in
+         the Supabase Dashboard, same as today's admin accounts, so this app never needs
+         a service_role key client-side.
+         ========================================================================= -->
+    <section id="view-campaign-logins" class="view-section">
+      <div class="page-title-box">
+        <h2>Campaign Logins</h2>
+        <p>Link an existing Supabase Auth account to a role and a permanent Agency + Campaign scope. Create the auth account first in Supabase Dashboard &rarr; Authentication &rarr; Users, then link it here.</p>
+      </div>
+
+      <div class="dashboard-card">
+        <div class="filter-bar-grid">
+          <div class="filter-bar-header">
+            <h4>All Login Accounts</h4>
+            <button type="button" id="btnAddCampaignLogin" class="btn btn-primary btn-sm">+ Link Account</button>
+          </div>
+        </div>
+
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
+              <tr><th>Username / Email</th><th>Role</th><th>Agency</th><th>Campaign</th><th>Status</th><th>Actions</th></tr>
+            </thead>
+            <tbody id="campaignLoginsTableBody">
+              <!-- Dynamically Populated -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- =========================================================================
+         VIEW: Export (Agency + Campaign + Role scoped Excel export)
+         ========================================================================= -->
+    <section id="view-export" class="view-section">
+      <div class="page-title-box">
+        <h2>Export</h2>
+        <p>Export user data filtered by Agency, Campaign, and Role - or export one whole Campaign with separate Role-wise sheets.</p>
       </div>
 
       <div class="form-grid">
-
-        <!-- Roles Management Card -->
+        <!-- Filtered Export -->
         <div class="form-card">
           <div class="card-header-box">
-            <div class="card-step-badge">Roles</div>
-            <h3>System Roles (Fixed)</h3>
+            <div class="card-step-badge">1</div>
+            <h3>Filtered Export</h3>
           </div>
 
-          <p class="text-muted" style="margin-bottom: 0.75rem;">Roles are fixed to <strong>BP</strong>, <strong>Supervisor</strong>, and <strong>FC</strong>. These cannot be modified.</p>
+          <div class="fields-row">
+            <div id="exportAgencyCampaignFilterGroup" class="agency-campaign-filter-group">
+              <div class="field-group">
+                <label for="exportAgency">Agency</label>
+                <select id="exportAgency" class="form-control">
+                  <option value="">All Agencies</option>
+                </select>
+              </div>
+              <div class="field-group">
+                <label for="exportCampaign">Campaign</label>
+                <select id="exportCampaign" class="form-control">
+                  <option value="">All Campaigns</option>
+                </select>
+              </div>
+            </div>
+            <div class="field-group">
+              <label for="exportRole">Role</label>
+              <select id="exportRole" class="form-control">
+                <option value="">All Roles (BP, Supervisor, FC sheets)</option>
+                <option value="BP">BP only</option>
+                <option value="Supervisor">Supervisor only</option>
+                <option value="FC">FC only</option>
+              </select>
+            </div>
+            <div class="field-group">
+              <label for="exportFromDate">From Date</label>
+              <input type="date" id="exportFromDate" class="form-control" />
+            </div>
+            <div class="field-group">
+              <label for="exportToDate">To Date</label>
+              <input type="date" id="exportToDate" class="form-control" />
+              <span class="field-hint">Leave both blank to include users created on any date</span>
+            </div>
+          </div>
 
-          <div id="rolesConfigList" class="chips-container">
-            <!-- Role chips dynamically populated (read-only) -->
+          <div class="form-actions-bar">
+            <button type="button" id="btnConfirmExport" class="btn btn-success">
+              <span class="btn-spinner" aria-hidden="true"></span>
+              <span class="btn-label">📊 Export Excel</span>
+            </button>
           </div>
         </div>
 
-        <!-- Designations Management Card -->
-        <div class="form-card">
+        <!-- Export Campaign Data (Role-wise Sheets) - hidden entirely for an agency_admin
+             account, who only ever has the one Campaign the Filtered Export card already
+             covers; this dedicated any-campaign picker is Super-Admin-only. -->
+        <div class="form-card" id="exportCampaignDataCard">
           <div class="card-header-box">
-            <div class="card-step-badge">Desig</div>
-            <h3>System Designations (Fixed)</h3>
+            <div class="card-step-badge">2</div>
+            <h3>Export Campaign Data</h3>
+          </div>
+          <p class="text-muted" style="margin-bottom: 0.75rem;">Pick one Campaign to export a single workbook with separate BP / Supervisor / FC sheets - useful for campaign-wise operational management.</p>
+
+          <div class="fields-row">
+            <div class="field-group">
+              <label for="exportCampaignOnly">Campaign</label>
+              <select id="exportCampaignOnly" class="form-control">
+                <option value="">-- Select Campaign --</option>
+              </select>
+            </div>
           </div>
 
-          <p class="text-muted" style="margin-bottom: 0.75rem;">Designations are fixed to <strong>BP</strong>, <strong>Supervisor</strong>, and <strong>FC</strong>. These cannot be modified.</p>
-
-          <div id="designationsConfigList" class="chips-container">
-            <!-- Designation chips dynamically populated (read-only) -->
+          <div class="form-actions-bar">
+            <button type="button" id="btnExportCampaignData" class="btn btn-success">
+              <span class="btn-spinner" aria-hidden="true"></span>
+              <span class="btn-label">📦 Export Campaign Data</span>
+            </button>
           </div>
         </div>
-
       </div>
     </section>
 
@@ -801,39 +1081,142 @@
   </div>
 
   <!-- =========================================================================
-       MODAL 4: Export Options (Date + Role) Before Excel Download
+       MODAL 4: Add/Edit Agency
        ========================================================================= -->
-  <div id="exportOptionsModal" class="modal-backdrop">
+  <div id="agencyModal" class="modal-backdrop">
     <div class="modal-box" style="max-width: 460px;">
       <div class="modal-header">
-        <h3>Export Options</h3>
-        <button type="button" id="btnCloseExportModal" class="btn-close-modal">&times;</button>
+        <h3 id="agencyModalTitle">Add Agency</h3>
+        <button type="button" id="btnCloseAgencyModal" class="btn-close-modal">&times;</button>
       </div>
       <div class="modal-body">
+        <input type="hidden" id="agencyId" />
         <div class="field-group mb-3">
-          <label for="exportFromDate">From Date</label>
-          <input type="date" id="exportFromDate" class="form-control" />
+          <label for="agencyName">Agency Name</label>
+          <input type="text" id="agencyName" class="form-control" placeholder="e.g. Asiatic Experiential Marketing Ltd." />
+          <span class="error-message" id="agencyNameError"></span>
         </div>
-        <div class="field-group mb-3">
-          <label for="exportToDate">To Date</label>
-          <input type="date" id="exportToDate" class="form-control" />
-          <span class="field-hint">Leave both blank to include users created on any date</span>
-        </div>
-        <div class="field-group mb-3">
-          <label for="exportRole">Role</label>
-          <select id="exportRole" class="form-control">
-            <option value="">All Roles (BP, Supervisor, FC sheets)</option>
-            <option value="BP">BP only</option>
-            <option value="Supervisor">Supervisor only</option>
-            <option value="FC">FC only</option>
+        <div class="field-group mb-3" id="agencyStatusGroup" style="display:none;">
+          <label for="agencyStatus">Status</label>
+          <select id="agencyStatus" class="form-control">
+            <option value="Active">Active</option>
+            <option value="Inactive">Inactive</option>
           </select>
         </div>
       </div>
       <div class="modal-footer">
-        <button type="button" id="btnCancelExport" class="btn btn-secondary">Cancel</button>
-        <button type="button" id="btnConfirmExport" class="btn btn-success">
+        <button type="button" id="btnCancelAgency" class="btn btn-secondary">Cancel</button>
+        <button type="button" id="btnSaveAgency" class="btn btn-success">
           <span class="btn-spinner" aria-hidden="true"></span>
-          <span class="btn-label">📊 Export</span>
+          <span class="btn-label">💾 Save Agency</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- =========================================================================
+       MODAL 5: Add/Edit Campaign
+       ========================================================================= -->
+  <div id="campaignModal" class="modal-backdrop">
+    <div class="modal-box" style="max-width: 460px;">
+      <div class="modal-header">
+        <h3 id="campaignModalTitle">Add Campaign</h3>
+        <button type="button" id="btnCloseCampaignModal" class="btn-close-modal">&times;</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="campaignIdField" />
+        <div class="field-group mb-3">
+          <label for="campaignAgency">Agency</label>
+          <select id="campaignAgency" class="form-control">
+            <option value="">-- Select Agency --</option>
+          </select>
+          <span class="error-message" id="campaignAgencyError"></span>
+        </div>
+        <div class="field-group mb-3">
+          <label for="campaignName">Campaign Name</label>
+          <input type="text" id="campaignName" class="form-control" placeholder="e.g. Horlicks School Campaign" />
+          <span class="error-message" id="campaignNameError"></span>
+        </div>
+        <div class="field-group mb-3" id="campaignStatusGroup" style="display:none;">
+          <label for="campaignStatus">Status</label>
+          <select id="campaignStatus" class="form-control">
+            <option value="Active">Active</option>
+            <option value="Inactive">Inactive</option>
+          </select>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="btnCancelCampaign" class="btn btn-secondary">Cancel</button>
+        <button type="button" id="btnSaveCampaign" class="btn btn-success">
+          <span class="btn-spinner" aria-hidden="true"></span>
+          <span class="btn-label">💾 Save Campaign</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- =========================================================================
+       MODAL 6: Link/Edit Campaign Login
+       ========================================================================= -->
+  <div id="campaignLoginModal" class="modal-backdrop">
+    <div class="modal-box" style="max-width: 520px;">
+      <div class="modal-header">
+        <h3 id="campaignLoginModalTitle">Link Account</h3>
+        <button type="button" id="btnCloseCampaignLoginModal" class="btn-close-modal">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="field-group mb-3" id="campaignLoginUserIdGroup">
+          <label for="campaignLoginUserId" data-tooltip="Copy this from Supabase Dashboard -> Authentication -> Users -> (click the user) -> User UID.">User ID (UUID) <span class="req-star">*</span></label>
+          <input type="text" id="campaignLoginUserId" class="form-control" placeholder="e.g. 8b6f0c9e-1234-4a5b-9abc-1234567890ab" />
+          <span class="field-hint">Copy from Supabase Dashboard &rarr; Authentication &rarr; Users. Create the account there first if it doesn't exist yet.</span>
+          <span class="error-message" id="campaignLoginUserIdError"></span>
+        </div>
+        <div class="field-group mb-3">
+          <label for="campaignLoginUsername">Username</label>
+          <input type="text" id="campaignLoginUsername" class="form-control" placeholder="e.g. asiatic_horlicks_school" />
+        </div>
+        <div class="field-group mb-3">
+          <label for="campaignLoginEmail">Email</label>
+          <input type="email" id="campaignLoginEmail" class="form-control" placeholder="e.g. asiatic.horlicks@example.com" />
+          <span class="field-hint">Informational label only - must match the linked Supabase Auth account for clarity, but sign-in itself uses that account's real credentials.</span>
+        </div>
+        <div class="field-group mb-3">
+          <label for="campaignLoginRole">Role</label>
+          <select id="campaignLoginRole" class="form-control">
+            <option value="agency_admin">Agency / Campaign Admin</option>
+            <option value="super_admin">Super Admin</option>
+          </select>
+          <span class="field-hint">Super Admin has no fixed Agency/Campaign and full access everywhere.</span>
+        </div>
+        <div class="field-group mb-3" id="campaignLoginAgencyGroup">
+          <label for="campaignLoginAgency">Agency <span class="req-star">*</span></label>
+          <select id="campaignLoginAgency" class="form-control">
+            <option value="">-- Select Agency --</option>
+          </select>
+          <span class="error-message" id="campaignLoginAgencyError"></span>
+        </div>
+        <div class="field-group mb-3" id="campaignLoginCampaignGroup">
+          <label for="campaignLoginCampaign">Campaign <span class="req-star">*</span></label>
+          <select id="campaignLoginCampaign" class="form-control" disabled>
+            <option value="">-- Select Agency First --</option>
+          </select>
+          <span class="error-message" id="campaignLoginCampaignError"></span>
+        </div>
+        <div class="field-group mb-3">
+          <label for="campaignLoginStatus">Account Status</label>
+          <select id="campaignLoginStatus" class="form-control">
+            <option value="Active">Active</option>
+            <option value="Inactive">Inactive</option>
+            <option value="Suspended">Suspended</option>
+          </select>
+          <span class="field-hint">Inactive/Suspended accounts are immediately blocked from logging in and lose all data access.</span>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="btnCancelCampaignLogin" class="btn btn-secondary">Cancel</button>
+        <button type="button" id="btnSaveCampaignLogin" class="btn btn-success">
+          <span class="btn-spinner" aria-hidden="true"></span>
+          <span class="btn-label">💾 Save Account</span>
         </button>
       </div>
     </div>
