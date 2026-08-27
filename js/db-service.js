@@ -141,6 +141,15 @@ function mapDbError(error) {
     if (msg.includes('account_profiles')) {
       return 'That User ID was not found. Copy it from Supabase Dashboard -> Authentication -> Users first.';
     }
+    if (msg.includes('campaigns_agency_id_fkey')) {
+      return 'This Agency still has Campaigns under it - delete or reassign those Campaigns first.';
+    }
+    if (msg.includes('users_agency_id_fkey') || msg.includes('users_campaign_id_fkey')) {
+      return 'This still has Users registered under it - it cannot be deleted while those Users exist.';
+    }
+    if (msg.includes('account_profiles_agency_id_fkey') || msg.includes('account_profiles_campaign_id_fkey')) {
+      return 'This still has Campaign Login accounts scoped to it - unlink or delete those accounts first.';
+    }
     return 'This action references a record that no longer exists.';
   }
   if (error.code === '23514') { // check_violation
@@ -487,6 +496,12 @@ const dbService = {
     return data;
   },
 
+  /** Hard delete - blocked at the DB (ON DELETE RESTRICT) while Campaigns/Users/Campaign Logins still reference this Agency; see mapDbError. */
+  async deleteAgency(id) {
+    const sb = requireClient();
+    await run(sb.from('agencies').delete().eq('id', id), 'Failed to delete Agency.');
+  },
+
   async createCampaign(agencyId, name) {
     const sb = requireClient();
     const identity = await getCurrentAdminIdentity();
@@ -508,6 +523,12 @@ const dbService = {
       'Failed to update Campaign.'
     );
     return data;
+  },
+
+  /** Hard delete - blocked at the DB (ON DELETE RESTRICT) while Users/Campaign Logins still reference this Campaign; see mapDbError. */
+  async deleteCampaign(id) {
+    const sb = requireClient();
+    await run(sb.from('campaigns').delete().eq('id', id), 'Failed to delete Campaign.');
   },
 
   /**

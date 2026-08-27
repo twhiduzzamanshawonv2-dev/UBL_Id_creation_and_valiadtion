@@ -180,6 +180,11 @@ class StorageManager {
     return updated;
   }
 
+  async deleteAgency(id) {
+    await dbService.deleteAgency(id);
+    await this.loadAgenciesAndCampaigns();
+  }
+
   async addCampaign(agencyId, name) {
     const created = await dbService.createCampaign(agencyId, name);
     await this.loadAgenciesAndCampaigns();
@@ -190,6 +195,11 @@ class StorageManager {
     const updated = await dbService.updateCampaign(id, fields);
     await this.loadAgenciesAndCampaigns();
     return updated;
+  }
+
+  async deleteCampaign(id) {
+    await dbService.deleteCampaign(id);
+    await this.loadAgenciesAndCampaigns();
   }
 
   async fetchDashboardCounts(filters = {}) {

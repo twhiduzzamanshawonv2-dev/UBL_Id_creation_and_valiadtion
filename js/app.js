@@ -140,6 +140,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   initCampaignLoginsPanel();
   initExportView();
   initModals();
+  initConfirmModal();
 
   // Dashboard is the default landing tab now that every view requires login (see
   // ADMIN_ONLY_VIEWS in switchTab()) - a visitor with no session is transparently
@@ -2207,6 +2208,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         <td>
           <div class="action-buttons">
             <button type="button" class="btn-action btn-edit" data-id="${a.id}" title="Edit Agency">✏️ Edit</button>
+            <button type="button" class="btn-action btn-delete" data-id="${a.id}" title="Delete Agency">🗑️ Delete</button>
           </div>
         </td>
       </tr>
@@ -2214,6 +2216,23 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     tbody.querySelectorAll('.btn-edit').forEach(btn => {
       btn.addEventListener('click', () => openAgencyModal(storage.getAgencyById(btn.getAttribute('data-id'))));
+    });
+    tbody.querySelectorAll('.btn-delete').forEach(btn => {
+      btn.addEventListener('click', () => confirmDeleteAgency(btn.getAttribute('data-id')));
+    });
+  }
+
+  function confirmDeleteAgency(id) {
+    const agency = storage.getAgencyById(id);
+    if (!agency) return;
+    showConfirmModal({
+      title: 'Delete Agency',
+      message: `Delete "${agency.name}"? This cannot be undone. Agencies that still have Campaigns, Users, or Campaign Logins cannot be deleted.`,
+      onConfirm: async () => {
+        await storage.deleteAgency(id);
+        renderAgenciesList();
+        showToast('Agency deleted.', 'success');
+      }
     });
   }
 
@@ -2315,6 +2334,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             <div class="action-buttons">
               <button type="button" class="btn-action btn-edit" data-id="${c.id}" title="Edit Campaign">✏️ Edit</button>
               <button type="button" class="btn-action btn-export-campaign" data-id="${c.id}" title="Export this Campaign's data">📦 Export</button>
+              <button type="button" class="btn-action btn-delete" data-id="${c.id}" title="Delete Campaign">🗑️ Delete</button>
             </div>
           </td>
         </tr>
@@ -2326,6 +2346,23 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
     tbody.querySelectorAll('.btn-export-campaign').forEach(btn => {
       btn.addEventListener('click', () => exportCampaignData(btn.getAttribute('data-id')));
+    });
+    tbody.querySelectorAll('.btn-delete').forEach(btn => {
+      btn.addEventListener('click', () => confirmDeleteCampaign(btn.getAttribute('data-id')));
+    });
+  }
+
+  function confirmDeleteCampaign(id) {
+    const campaign = storage.getCampaignById(id);
+    if (!campaign) return;
+    showConfirmModal({
+      title: 'Delete Campaign',
+      message: `Delete "${campaign.name}"? This cannot be undone. Campaigns that still have Users or Campaign Logins cannot be deleted.`,
+      onConfirm: async () => {
+        await storage.deleteCampaign(id);
+        renderCampaignsList();
+        showToast('Campaign deleted.', 'success');
+      }
     });
   }
 
@@ -2894,6 +2931,55 @@ document.addEventListener('DOMContentLoaded', async () => {
         await exportCampaignData(campaignId);
         btnExportCampaignData.disabled = false;
         btnExportCampaignData.classList.remove('is-loading');
+      });
+    }
+  }
+
+  /* ==========================================================================
+     11a. Generic Delete Confirmation Modal (reused by Agencies/Campaigns/etc.)
+     ========================================================================== */
+  let confirmModalAction = null;
+
+  /**
+   * Opens the shared confirm modal. `onConfirm` is an async function that
+   * performs the actual delete - errors it throws are shown as a toast and
+   * the modal stays open so the user can cancel; on success the modal closes.
+   */
+  function showConfirmModal({ title = 'Confirm Delete', message, confirmLabel = '🗑️ Delete', onConfirm }) {
+    const modal = document.getElementById('confirmModal');
+    if (!modal) return;
+    document.getElementById('confirmModalTitle').textContent = title;
+    document.getElementById('confirmModalMessage').textContent = message;
+    document.getElementById('btnConfirmAction').querySelector('.btn-label').textContent = confirmLabel;
+    confirmModalAction = onConfirm;
+    modal.classList.add('open');
+  }
+
+  function initConfirmModal() {
+    const modal = document.getElementById('confirmModal');
+    if (!modal) return;
+    const close = () => modal.classList.remove('open');
+
+    const btnClose = document.getElementById('btnCloseConfirmModal');
+    const btnCancel = document.getElementById('btnCancelConfirm');
+    [btnClose, btnCancel].forEach(btn => {
+      if (btn) btn.addEventListener('click', close);
+    });
+
+    const btnConfirm = document.getElementById('btnConfirmAction');
+    if (btnConfirm) {
+      btnConfirm.addEventListener('click', async () => {
+        if (!confirmModalAction || btnConfirm.disabled) return;
+        btnConfirm.disabled = true;
+        btnConfirm.classList.add('is-loading');
+        try {
+          await confirmModalAction();
+          close();
+        } catch (err) {
+          showToast(err.message || 'Failed to delete.', 'danger');
+        }
+        btnConfirm.disabled = false;
+        btnConfirm.classList.remove('is-loading');
       });
     }
   }

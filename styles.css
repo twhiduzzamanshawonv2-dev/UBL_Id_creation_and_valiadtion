@@ -1155,6 +1155,21 @@ label {
   border-color: var(--primary);
 }
 
+.btn-action.btn-delete:hover {
+  background: var(--danger);
+  color: #ffffff;
+  border-color: var(--danger);
+}
+
+.btn-danger {
+  background: var(--danger);
+  color: #ffffff;
+}
+
+.btn-danger:hover {
+  background: #dc2626;
+}
+
 /* Modal Popup Windows */
 .modal-backdrop {
   position: fixed;

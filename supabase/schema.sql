@@ -473,6 +473,21 @@ drop policy if exists campaigns_update_super_admin on public.campaigns;
 create policy campaigns_update_super_admin on public.campaigns
   for update to authenticated using (public.is_super_admin()) with check (public.is_super_admin());
 
+-- Hard delete is Super-Admin-only. The existing ON DELETE RESTRICT foreign
+-- keys (campaigns.agency_id -> agencies, users.agency_id/campaign_id ->
+-- agencies/campaigns, account_profiles.agency_id/campaign_id) are the actual
+-- backstop: an Agency still owning Campaigns, or a Campaign still owning
+-- Users/login accounts, cannot be deleted regardless of this policy - the
+-- app surfaces that FK violation as a friendly "still in use" message
+-- (see db-service.js mapDbError) instead of letting the delete silently cascade.
+drop policy if exists agencies_delete_super_admin on public.agencies;
+create policy agencies_delete_super_admin on public.agencies
+  for delete to authenticated using (public.is_super_admin());
+
+drop policy if exists campaigns_delete_super_admin on public.campaigns;
+create policy campaigns_delete_super_admin on public.campaigns
+  for delete to authenticated using (public.is_super_admin());
+
 -- ----------------------------------------------------------------------------
 -- Indexes - only for fields that are actually searched/filtered/sorted on.
 -- Unique constraints above already create indexes for user_code/mobile/nid.

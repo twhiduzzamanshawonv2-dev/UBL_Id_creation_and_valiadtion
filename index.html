@@ -706,7 +706,7 @@
         <div class="table-responsive">
           <table class="data-table">
             <thead>
-              <tr><th>Name</th><th>Status</th><th>Created Date</th><th>Actions</th></tr>
+              <tr><th>Name</th><th>Status</th><th>Created Date</th><th style="width:170px;">Actions</th></tr>
             </thead>
             <tbody id="agenciesTableBody">
               <!-- Dynamically Populated -->
@@ -742,7 +742,7 @@
         <div class="table-responsive">
           <table class="data-table">
             <thead>
-              <tr><th>Campaign Name</th><th>Agency</th><th>Status</th><th>Created Date</th><th>Actions</th></tr>
+              <tr><th>Campaign Name</th><th>Agency</th><th>Status</th><th>Created Date</th><th style="width:220px;">Actions</th></tr>
             </thead>
             <tbody id="campaignsTableBody">
               <!-- Dynamically Populated -->
@@ -1150,6 +1150,28 @@
         <button type="button" id="btnSaveCampaign" class="btn btn-success">
           <span class="btn-spinner" aria-hidden="true"></span>
           <span class="btn-label">💾 Save Campaign</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- =========================================================================
+       MODAL: Generic Delete Confirmation (reused by Agencies/Campaigns/etc.)
+       ========================================================================= -->
+  <div id="confirmModal" class="modal-backdrop">
+    <div class="modal-box" style="max-width: 420px;">
+      <div class="modal-header">
+        <h3 id="confirmModalTitle">Confirm Delete</h3>
+        <button type="button" id="btnCloseConfirmModal" class="btn-close-modal">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p id="confirmModalMessage"></p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="btnCancelConfirm" class="btn btn-secondary">Cancel</button>
+        <button type="button" id="btnConfirmAction" class="btn btn-danger">
+          <span class="btn-spinner" aria-hidden="true"></span>
+          <span class="btn-label">🗑️ Delete</span>
         </button>
       </div>
     </div>
