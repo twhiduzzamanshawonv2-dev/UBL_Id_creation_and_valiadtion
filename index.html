@@ -1,0 +1,819 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="User Account Creation Information Collection System replacing manual Excel collection with automated validation, Bangladesh location cascading dropdowns, auto name formatting, and Excel exports.">
+  <title>User Account Creation Information Collection System</title>
+  
+  <!-- CSS Stylesheet -->
+  <link rel="stylesheet" href="styles.css">
+  
+  <!-- SheetJS Library CDN for Client-Side Excel (.xlsx) Export -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
+  <!-- Supabase JS SDK CDN (database + storage client) -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+</head>
+<body>
+
+  <!-- Icon Sprite Sheet (Feather-style icons, referenced via <use>) -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <symbol id="icon-user" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle>
+      </symbol>
+      <symbol id="icon-phone" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"></path>
+      </symbol>
+      <symbol id="icon-mail" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline>
+      </symbol>
+      <symbol id="icon-calendar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line>
+      </symbol>
+      <symbol id="icon-map-pin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle>
+      </symbol>
+      <symbol id="icon-briefcase" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="2" y="7" width="20" height="14" rx="2" ry="2"></rect><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path>
+      </symbol>
+      <symbol id="icon-user-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="8.5" cy="7" r="4"></circle><polyline points="17,11 19,13 23,9"></polyline>
+      </symbol>
+      <symbol id="icon-id-card" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="1" y="4" width="22" height="16" rx="2" ry="2"></rect><line x1="1" y1="10" x2="23" y2="10"></line>
+      </symbol>
+    </defs>
+  </svg>
+
+  <!-- App Main Header -->
+  <header class="app-header">
+    <div class="brand-container">
+      <div class="brand-icon">U</div>
+      <div class="brand-text">
+        <h1>User Account Creation System</h1>
+        <p>Information Collection &amp; Management Portal</p>
+      </div>
+    </div>
+    
+    <nav class="app-nav">
+      <button type="button" class="nav-tab active" data-view="create-user" id="navCreateUser">
+        📝 User Registration
+      </button>
+      <button type="button" class="nav-tab" data-view="admin-management" id="navAdmin">
+        👥 Admin Dashboard
+      </button>
+      <button type="button" class="nav-tab" data-view="admin-settings" id="navSettings">
+        ⚙️ System Settings
+      </button>
+      <button type="button" class="nav-tab" data-view="excel-validator" id="navExcelValidator">
+        📥 Excel Validator
+      </button>
+    </nav>
+  </header>
+
+  <!-- Main Application Wrapper -->
+  <main class="main-wrapper">
+
+    <!-- Global Backend Connectivity Error Banner (Google Sheet backend unreachable/misconfigured) -->
+    <div id="backendErrorBanner" class="global-error-banner"></div>
+
+    <!-- =========================================================================
+         VIEW 1: User Registration Form
+         ========================================================================= -->
+    <section id="view-create-user" class="view-section active">
+      <div class="page-title-box">
+        <h2>User Registration Form</h2>
+        <p>Enter required information to create a new user account. All fields marked with (<span class="req-star">*</span>) are mandatory.</p>
+      </div>
+
+      <!-- Global Warning Banner for Duplicates -->
+      <div id="duplicateWarningBanner" class="warning-banner"></div>
+
+      <form id="userRegistrationForm" class="form-grid" onsubmit="return false;">
+
+        <!-- 1. Personal Information Section -->
+        <div class="form-card">
+          <div class="card-header-box">
+            <div class="card-step-badge">1</div>
+            <h3>Personal Information</h3>
+          </div>
+
+          <div class="fields-row">
+            <!-- Name -->
+            <div class="field-group">
+              <label for="name">Full Name <span class="req-star">*</span></label>
+              <div class="input-icon-wrap">
+                <svg class="input-icon" aria-hidden="true"><use href="#icon-user"></use></svg>
+                <input type="text" id="name" class="form-control" placeholder="e.g. Md Rahim Uddin" autocomplete="off" aria-required="true" />
+              </div>
+              <span class="field-hint">Letters &amp; spaces only. Dots, commas &amp; special characters are auto-removed (e.g. Md., Rahim → Md Rahim)</span>
+              <span class="error-message" id="nameError"></span>
+            </div>
+
+            <!-- Gender -->
+            <div class="field-group">
+              <label for="gender">Gender <span class="req-star">*</span></label>
+              <select id="gender" class="form-control" aria-required="true">
+                <option value="">-- Select Gender --</option>
+                <option value="Male">Male</option>
+                <option value="Female">Female</option>
+              </select>
+              <span class="error-message" id="genderError"></span>
+            </div>
+
+            <!-- Father's Name -->
+            <div class="field-group">
+              <label for="fatherName">Father's Name <span class="req-star">*</span></label>
+              <div class="input-icon-wrap">
+                <svg class="input-icon" aria-hidden="true"><use href="#icon-user"></use></svg>
+                <input type="text" id="fatherName" class="form-control" placeholder="e.g. Md Abdul Karim" autocomplete="off" aria-required="true" />
+              </div>
+              <span class="field-hint">Letters &amp; spaces only (dots, commas &amp; special characters auto-removed)</span>
+              <span class="error-message" id="fatherNameError"></span>
+            </div>
+
+            <!-- Mother's Name -->
+            <div class="field-group">
+              <label for="motherName">Mother's Name <span class="req-star">*</span></label>
+              <div class="input-icon-wrap">
+                <svg class="input-icon" aria-hidden="true"><use href="#icon-user"></use></svg>
+                <input type="text" id="motherName" class="form-control" placeholder="e.g. Begum Fatema" autocomplete="off" aria-required="true" />
+              </div>
+              <span class="field-hint">Letters &amp; spaces only (dots, commas &amp; special characters auto-removed)</span>
+              <span class="error-message" id="motherNameError"></span>
+            </div>
+
+            <!-- Date of Birth -->
+            <div class="field-group">
+              <label><svg class="label-icon" aria-hidden="true"><use href="#icon-calendar"></use></svg>Date of Birth <span class="req-star">*</span></label>
+              <div class="dob-selects" style="display:flex;gap:0.5rem;">
+                <select id="dobDay" class="form-control" aria-label="Day" aria-required="true"></select>
+                <select id="dobMonth" class="form-control" aria-label="Month" aria-required="true"></select>
+                <select id="dobYear" class="form-control" aria-label="Year" aria-required="true"></select>
+              </div>
+              <input type="hidden" id="dob" />
+              <span class="field-hint">Must be at least 18 years old as of today</span>
+              <span class="error-message" id="dobError"></span>
+            </div>
+
+            <!-- User Photo Upload -->
+            <div class="field-group">
+              <label for="userPhoto">User Photo <span class="req-star">*</span></label>
+              <div class="upload-dropzone">
+                <input type="file" id="userPhoto" class="file-input-hidden" accept="image/png, image/jpeg, image/jpg" aria-required="true" />
+                <div class="dropzone-content">
+                  <span class="upload-icon">📷</span>
+                  <strong>Upload User Photo</strong>
+                  <div class="field-hint">JPG, JPEG, PNG (Max 5MB)</div>
+                </div>
+              </div>
+              <div id="userPhotoPreview" class="preview-container"></div>
+              <span class="error-message" id="userPhotoError"></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 2. Contact Information Section -->
+        <div class="form-card">
+          <div class="card-header-box">
+            <div class="card-step-badge">2</div>
+            <h3>Contact Information</h3>
+          </div>
+
+          <div class="fields-row">
+            <!-- Mobile Number -->
+            <div class="field-group">
+              <label for="mobile">Mobile Number <span class="req-star">*</span></label>
+              <div class="input-icon-wrap">
+                <svg class="input-icon" aria-hidden="true"><use href="#icon-phone"></use></svg>
+                <input type="tel" id="mobile" class="form-control" placeholder="e.g. 01712345678" maxlength="11" aria-required="true" />
+              </div>
+              <span class="field-hint">Exactly 11 digits Bangladesh mobile (01XXXXXXXXX)</span>
+              <span class="error-message" id="mobileError"></span>
+            </div>
+
+            <!-- Email -->
+            <div class="field-group">
+              <label for="email">Email <span class="req-star">*</span></label>
+              <div class="input-icon-wrap">
+                <svg class="input-icon" aria-hidden="true"><use href="#icon-mail"></use></svg>
+                <input type="email" id="email" class="form-control" placeholder="e.g. example@gmail.com" autocomplete="off" aria-required="true" />
+              </div>
+              <span class="field-hint">Enter a valid email address (e.g. name@example.com)</span>
+              <span class="error-message" id="emailError"></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 3. Location Information Section -->
+        <div class="form-card">
+          <div class="card-header-box">
+            <div class="card-step-badge">3</div>
+            <h3>Location Information</h3>
+          </div>
+
+          <div class="fields-row">
+            <!-- Division -->
+            <div class="field-group">
+              <label>Division <span class="req-star">*</span></label>
+              <div id="divisionMultiSelectContainer"></div>
+              <input type="hidden" id="division" />
+              <span class="field-hint">Select one or more divisions</span>
+              <span class="error-message" id="divisionError"></span>
+            </div>
+
+            <!-- District -->
+            <div class="field-group">
+              <label>District <span class="req-star">*</span></label>
+              <div id="districtMultiSelectContainer"></div>
+              <input type="hidden" id="district" />
+              <span class="field-hint">Choices depend on the selected Division(s)</span>
+              <span class="error-message" id="districtError"></span>
+            </div>
+
+            <!-- Upazila -->
+            <div class="field-group">
+              <label>Upazila <span class="req-star">*</span></label>
+              <div id="upazilaMultiSelectContainer"></div>
+              <input type="hidden" id="upazila" />
+              <span class="field-hint">Choices depend on the selected District(s)</span>
+              <span class="error-message" id="upazilaError"></span>
+            </div>
+
+            <!-- Thana -->
+            <div class="field-group">
+              <label>Thana <span class="req-star">*</span></label>
+              <div id="thanaMultiSelectContainer"></div>
+              <input type="hidden" id="thana" />
+              <span class="field-hint">Choices depend on the selected Upazila(s)</span>
+              <span class="error-message" id="thanaError"></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 4. Employment / Role Information Section -->
+        <div class="form-card">
+          <div class="card-header-box">
+            <div class="card-step-badge">4</div>
+            <h3>Employment / Role Information</h3>
+          </div>
+
+          <div class="fields-row">
+            <!-- Designation -->
+            <div class="field-group">
+              <label for="designation">Designation <span class="req-star">*</span></label>
+              <div class="input-icon-wrap">
+                <svg class="input-icon" aria-hidden="true"><use href="#icon-briefcase"></use></svg>
+                <select id="designation" class="form-control" aria-required="true">
+                  <option value="">-- Select Designation --</option>
+                </select>
+              </div>
+              <span class="field-hint">Determines Role and who this user reports to</span>
+              <span class="error-message" id="designationError"></span>
+            </div>
+
+            <!-- Role (always auto-synced with Designation - not independently editable) -->
+            <div class="field-group">
+              <label for="role">Role <span class="req-star">*</span></label>
+              <div class="input-icon-wrap">
+                <svg class="input-icon" aria-hidden="true"><use href="#icon-briefcase"></use></svg>
+                <select id="role" class="form-control" aria-required="true" disabled>
+                  <option value="">-- Select Role --</option>
+                </select>
+              </div>
+              <span class="field-hint">Automatically matches Designation</span>
+              <span class="error-message" id="roleError"></span>
+            </div>
+
+            <!-- Report To (Searchable Select) - candidates depend on Designation:
+                 BP -> Supervisor, Supervisor -> FC, FC -> none (disabled) -->
+            <div class="field-group searchable-select-container">
+              <label for="reportToSearch" data-tooltip="BP reports to a Supervisor, Supervisor reports to an FC, FC has no Report To.">Report To <span class="req-star">*</span></label>
+              <div class="input-icon-wrap">
+                <svg class="input-icon" aria-hidden="true"><use href="#icon-user-check"></use></svg>
+                <input type="text" id="reportToSearch" class="form-control" placeholder="Select Designation first" autocomplete="off" aria-required="true" disabled />
+              </div>
+              <input type="hidden" id="reportTo" />
+              <div id="reportToDropdown" class="searchable-dropdown"></div>
+              <span class="field-hint" id="reportToHint">Select a Designation to see valid Report To options</span>
+              <span class="error-message" id="reportToError"></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 5. NID & Documents Section -->
+        <div class="form-card">
+          <div class="card-header-box">
+            <div class="card-step-badge">5</div>
+            <h3>NID &amp; Documents</h3>
+          </div>
+
+          <div class="fields-row">
+            <!-- NID Number -->
+            <div class="field-group full-width">
+              <label for="nid" data-tooltip="Bangladesh NID numbers are 10 digits (Smart Card), 13 digits, or 17 digits long.">NID Number <span class="req-star">*</span></label>
+              <div class="input-icon-wrap">
+                <svg class="input-icon" aria-hidden="true"><use href="#icon-id-card"></use></svg>
+                <input type="text" id="nid" class="form-control" placeholder="e.g. 19922692738491823" maxlength="17" aria-required="true" />
+              </div>
+              <span class="field-hint">Numeric only (10, 13, or 17 digits)</span>
+              <span class="error-message" id="nidError"></span>
+            </div>
+
+            <!-- NID Front Side Image -->
+            <div class="field-group">
+              <label for="nidFront">NID Front Side Image <span class="req-star">*</span></label>
+              <div class="upload-dropzone">
+                <input type="file" id="nidFront" class="file-input-hidden" accept="image/png, image/jpeg, image/jpg" aria-required="true" />
+                <div class="dropzone-content">
+                  <span class="upload-icon">🆔</span>
+                  <strong>Upload NID Front Side</strong>
+                  <div class="field-hint">JPG, JPEG, PNG (Max 5MB)</div>
+                </div>
+              </div>
+              <div id="nidFrontPreview" class="preview-container"></div>
+              <span class="error-message" id="nidFrontError"></span>
+            </div>
+
+            <!-- NID Back Side Image -->
+            <div class="field-group">
+              <label for="nidBack">NID Back Side Image <span class="req-star">*</span></label>
+              <div class="upload-dropzone">
+                <input type="file" id="nidBack" class="file-input-hidden" accept="image/png, image/jpeg, image/jpg" aria-required="true" />
+                <div class="dropzone-content">
+                  <span class="upload-icon">📄</span>
+                  <strong>Upload NID Back Side</strong>
+                  <div class="field-hint">JPG, JPEG, PNG (Max 5MB)</div>
+                </div>
+              </div>
+              <div id="nidBackPreview" class="preview-container"></div>
+              <span class="error-message" id="nidBackError"></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Form Actions Bar -->
+        <div class="form-actions-bar">
+          <button type="button" id="btnResetForm" class="btn btn-outline">↺ Reset Form</button>
+          <button type="button" id="btnPreviewForm" class="btn btn-primary">
+            <span class="btn-spinner" aria-hidden="true"></span>
+            <span class="btn-label">👁️ Preview &amp; Submit</span>
+          </button>
+        </div>
+
+      </form>
+    </section>
+
+    <!-- =========================================================================
+         VIEW 2: Admin / User Management Panel
+         ========================================================================= -->
+    <section id="view-admin-management" class="view-section">
+      <div class="page-title-box">
+        <h2>Admin / User Management Directory</h2>
+        <p>Search, filter, view details, activate/deactivate accounts, and export user records to Excel.</p>
+      </div>
+
+      <div class="dashboard-card">
+        
+        <!-- Filter Controls Bar -->
+        <div class="filter-bar-grid">
+          <div class="filter-bar-header">
+            <h4>Filter &amp; Search Users</h4>
+            <span id="userCountBadge" class="badge badge-role">0 Users</span>
+          </div>
+
+          <!-- Global Search Input -->
+          <div class="field-group">
+            <label for="adminSearchInput">Search Keywords</label>
+            <input type="text" id="adminSearchInput" class="form-control" placeholder="Name, Mobile, NID..." />
+          </div>
+
+          <!-- Division Filter -->
+          <div class="field-group">
+            <label for="filterDivision">Division</label>
+            <select id="filterDivision" class="form-control">
+              <option value="">All Divisions</option>
+            </select>
+          </div>
+
+          <!-- District Filter -->
+          <div class="field-group">
+            <label for="filterDistrict">District</label>
+            <select id="filterDistrict" class="form-control">
+              <option value="">All Districts</option>
+            </select>
+          </div>
+
+          <!-- Upazila Filter -->
+          <div class="field-group">
+            <label for="filterUpazila">Upazila</label>
+            <select id="filterUpazila" class="form-control">
+              <option value="">All Upazilas</option>
+            </select>
+          </div>
+
+          <!-- Thana Filter -->
+          <div class="field-group">
+            <label for="filterThana">Thana</label>
+            <select id="filterThana" class="form-control">
+              <option value="">All Thanas</option>
+            </select>
+          </div>
+
+          <!-- Designation Filter -->
+          <div class="field-group">
+            <label for="filterDesignation">Designation</label>
+            <select id="filterDesignation" class="form-control">
+              <option value="">All Designations</option>
+            </select>
+          </div>
+
+          <!-- Role Filter -->
+          <div class="field-group">
+            <label for="filterRole">Role</label>
+            <select id="filterRole" class="form-control">
+              <option value="">All Roles</option>
+            </select>
+          </div>
+
+          <!-- Status Filter -->
+          <div class="field-group">
+            <label for="filterStatus">Status</label>
+            <select id="filterStatus" class="form-control">
+              <option value="">All Statuses</option>
+              <option value="Active">Active</option>
+              <option value="Inactive">Inactive</option>
+            </select>
+          </div>
+
+          <!-- From Date Filter (by Created Date) -->
+          <div class="field-group">
+            <label for="filterFromDate" data-tooltip="Filters by Created Date - only users created on or after this date.">From Date</label>
+            <input type="date" id="filterFromDate" class="form-control" />
+          </div>
+
+          <!-- To Date Filter (by Created Date) -->
+          <div class="field-group">
+            <label for="filterToDate" data-tooltip="Filters by Created Date - only users created on or before this date.">To Date</label>
+            <input type="date" id="filterToDate" class="form-control" />
+          </div>
+
+          <!-- Filter Action Buttons -->
+          <div class="field-group full-width" style="display: flex; gap: 0.75rem; justify-content: flex-end; align-items: flex-end;">
+            <button type="button" id="btnResetFilters" class="btn btn-outline">Clear Filters</button>
+            <button type="button" id="btnRefreshUsers" class="btn btn-outline">
+              <span class="btn-spinner" aria-hidden="true"></span>
+              <span class="btn-label">🔄 Refresh from Sheet</span>
+            </button>
+            <button type="button" id="btnExportExcel" class="btn btn-success">
+              <span class="btn-spinner" aria-hidden="true"></span>
+              <span class="btn-label">📊 Export to Excel (BP / Supervisor / FC)</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Users Table -->
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>User ID</th>
+                <th>User Profile</th>
+                <th>Mobile Number</th>
+                <th>Designation</th>
+                <th>Role</th>
+                <th>Location</th>
+                <th>Report To</th>
+                <th>Status</th>
+                <th>Created Date</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="adminUserTableBody">
+              <!-- Dynamically Populated -->
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Pagination Controls -->
+        <div id="paginationBar" class="pagination-bar">
+          <button type="button" id="btnPrevPage" class="btn btn-outline btn-sm">&laquo; Previous</button>
+          <div id="paginationPages" class="pagination-pages"></div>
+          <button type="button" id="btnNextPage" class="btn btn-outline btn-sm">Next &raquo;</button>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- =========================================================================
+         VIEW 3: Admin Settings View (Role & Designation Config)
+         ========================================================================= -->
+    <section id="view-admin-settings" class="view-section">
+      <div class="page-title-box">
+        <h2>System Settings &amp; Configuration</h2>
+        <p>Manage dynamic Designation options, predefined Roles, and system data maintenance.</p>
+      </div>
+
+      <div class="form-grid">
+
+        <!-- Roles Management Card -->
+        <div class="form-card">
+          <div class="card-header-box">
+            <div class="card-step-badge">Roles</div>
+            <h3>System Roles (Fixed)</h3>
+          </div>
+
+          <p class="text-muted" style="margin-bottom: 0.75rem;">Roles are fixed to <strong>BP</strong>, <strong>Supervisor</strong>, and <strong>FC</strong>. These cannot be modified.</p>
+
+          <div id="rolesConfigList" class="chips-container">
+            <!-- Role chips dynamically populated (read-only) -->
+          </div>
+        </div>
+
+        <!-- Designations Management Card -->
+        <div class="form-card">
+          <div class="card-header-box">
+            <div class="card-step-badge">Desig</div>
+            <h3>System Designations (Fixed)</h3>
+          </div>
+
+          <p class="text-muted" style="margin-bottom: 0.75rem;">Designations are fixed to <strong>BP</strong>, <strong>Supervisor</strong>, and <strong>FC</strong>. These cannot be modified.</p>
+
+          <div id="designationsConfigList" class="chips-container">
+            <!-- Designation chips dynamically populated (read-only) -->
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- =========================================================================
+         VIEW 4: Excel Validator & Data Cleaner
+         ========================================================================= -->
+    <section id="view-excel-validator" class="view-section">
+      <div class="page-title-box">
+        <h2>Excel Validator &amp; Data Cleaner</h2>
+        <p>Upload any Excel/CSV file, auto-detect its columns, validate every field against the existing location, designation, role, DOB and phone rules, and download a corrected file.</p>
+      </div>
+
+      <div class="ev-stepper" id="evStepper">
+        <div class="ev-step-dot active" data-step="upload"><span class="ev-step-num">1</span><span class="ev-step-label">Upload</span></div>
+        <div class="ev-step-dot" data-step="mapping"><span class="ev-step-num">2</span><span class="ev-step-label">Map Columns</span></div>
+        <div class="ev-step-dot" data-step="validate"><span class="ev-step-num">3</span><span class="ev-step-label">Validate</span></div>
+        <div class="ev-step-dot" data-step="review"><span class="ev-step-num">4</span><span class="ev-step-label">Review &amp; Download</span></div>
+      </div>
+
+      <!-- Step 1: Upload -->
+      <div class="ev-panel active" id="evPanelUpload">
+        <div class="form-card">
+          <div class="card-header-box">
+            <div class="card-step-badge">1</div>
+            <h3>Upload Excel / CSV File</h3>
+          </div>
+
+          <div class="ev-dropzone" id="evDropzone">
+            <input type="file" id="evFileInput" class="file-input-hidden" accept=".xlsx,.xls,.csv" />
+            <div class="dropzone-content">
+              <span class="upload-icon">📥</span>
+              <p><strong>Drag &amp; drop</strong> your Excel or CSV file here</p>
+              <p class="text-muted">or click to browse — .xlsx, .xls, .csv (max 15MB)</p>
+            </div>
+          </div>
+
+          <div id="evFileInfo" class="ev-file-info" style="display:none;">
+            <div class="ev-file-info-row">
+              <div>
+                <div class="file-name" id="evFileName"></div>
+                <div class="text-muted" id="evFileMeta"></div>
+              </div>
+              <button type="button" id="evBtnRemoveFile" class="btn btn-secondary btn-sm">Remove</button>
+            </div>
+            <div id="evUploadProgressWrap" class="ev-progress-wrap" style="display:none;">
+              <div class="ev-progress-bar"><div id="evUploadProgressFill" class="ev-progress-fill"></div></div>
+            </div>
+          </div>
+
+          <div class="ev-actions">
+            <button type="button" id="evBtnToMapping" class="btn btn-primary" disabled>Continue to Column Mapping →</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 2: Column Mapping -->
+      <div class="ev-panel" id="evPanelMapping">
+        <div class="form-card">
+          <div class="card-header-box">
+            <div class="card-step-badge">2</div>
+            <h3>Detected Column Mapping</h3>
+          </div>
+          <p class="text-muted" style="margin-bottom:0.75rem;">Review how your columns were mapped to system fields. Adjust any that weren't detected confidently using the dropdown.</p>
+          <div class="ev-table-wrap">
+            <table class="data-table" id="evMappingTable">
+              <thead><tr><th>Uploaded Column</th><th>System Field</th><th>Confidence</th></tr></thead>
+              <tbody id="evMappingTableBody"></tbody>
+            </table>
+          </div>
+          <div class="ev-actions">
+            <button type="button" id="evBtnBackToUpload" class="btn btn-secondary">← Back</button>
+            <button type="button" id="evBtnToValidate" class="btn btn-primary">Validate Data →</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 3: Validate -->
+      <div class="ev-panel" id="evPanelValidate">
+        <div class="form-card ev-validate-card">
+          <div class="card-header-box">
+            <div class="card-step-badge">3</div>
+            <h3>Validating Data…</h3>
+          </div>
+          <div class="ev-progress-wrap">
+            <div class="ev-progress-bar"><div id="evValidateProgressFill" class="ev-progress-fill"></div></div>
+          </div>
+          <p class="text-muted" id="evValidateProgressText">Validating 0 / 0 rows</p>
+        </div>
+      </div>
+
+      <!-- Step 4: Review & Download -->
+      <div class="ev-panel" id="evPanelReview">
+        <div class="ev-dashboard" id="evDashboard"></div>
+
+        <div class="form-card">
+          <div class="card-header-box">
+            <div class="card-step-badge">4</div>
+            <h3>Review Corrections</h3>
+          </div>
+
+          <div class="ev-filter-bar" id="evFilterBar">
+            <button type="button" class="ev-filter-btn active" data-filter="all">All</button>
+            <button type="button" class="ev-filter-btn" data-filter="valid">Valid</button>
+            <button type="button" class="ev-filter-btn" data-filter="corrected">Corrected</button>
+            <button type="button" class="ev-filter-btn" data-filter="invalid">Invalid</button>
+            <button type="button" class="ev-filter-btn" data-filter="review">Needs Review</button>
+            <span class="ev-filter-bar-spacer"></span>
+            <button type="button" id="evBtnAcceptAllReviews" class="btn btn-outline btn-sm">✓ Accept All Suggestions</button>
+            <button type="button" id="evBtnDeclineAllReviews" class="btn btn-outline btn-sm">✕ Decline All Suggestions</button>
+          </div>
+
+          <div class="ev-table-wrap">
+            <table class="data-table" id="evReviewTable">
+              <thead><tr id="evReviewTableHead"></tr></thead>
+              <tbody id="evReviewTableBody"></tbody>
+            </table>
+          </div>
+
+          <div class="ev-actions">
+            <button type="button" id="evBtnBackToUploadFromReview" class="btn btn-secondary">↺ Validate Another File</button>
+            <button type="button" id="evBtnDownload" class="btn btn-success">⬇️ Download Corrected Excel</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- =========================================================================
+       MODAL 1: Data Preview Modal Before Final Submission
+       ========================================================================= -->
+  <div id="previewModal" class="modal-backdrop">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h3>Review Information Before Submission</h3>
+        <button type="button" id="btnClosePreviewModal" class="btn-close-modal">&times;</button>
+      </div>
+      <div id="previewModalContent" class="modal-body">
+        <!-- Preview Content Injected Here -->
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="btnEditBack" class="btn btn-secondary">✏️ Edit Information</button>
+        <button type="button" id="btnConfirmSubmit" class="btn btn-success">
+          <span class="btn-spinner" aria-hidden="true"></span>
+          <span class="btn-label">✅ Confirm &amp; Submit</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- =========================================================================
+       MODAL 2: User Details Profile Modal
+       ========================================================================= -->
+  <div id="userDetailModal" class="modal-backdrop">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h3>User Profile Details</h3>
+        <button type="button" id="btnCloseDetailModal" class="btn-close-modal">&times;</button>
+      </div>
+      <div id="userDetailModalContent" class="modal-body">
+        <!-- User Details Injected Here -->
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" onclick="document.getElementById('userDetailModal').classList.remove('open')">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- =========================================================================
+       MODAL 3: User Quick Edit Modal
+       ========================================================================= -->
+  <div id="userEditModal" class="modal-backdrop">
+    <div class="modal-box" style="max-width: 550px;">
+      <div class="modal-header">
+        <h3>Edit User Information</h3>
+        <button type="button" id="btnCloseEditModal" class="btn-close-modal">&times;</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="editUserId" />
+        <div class="field-group mb-3">
+          <label for="editName">Full Name</label>
+          <input type="text" id="editName" class="form-control" />
+        </div>
+        <div class="field-group mb-3">
+          <label for="editMobile">Mobile Number</label>
+          <input type="tel" id="editMobile" class="form-control" maxlength="11" />
+        </div>
+        <div class="field-group mb-3">
+          <label for="editDesignation">Designation</label>
+          <select id="editDesignation" class="form-control"></select>
+        </div>
+        <div class="field-group mb-3">
+          <label for="editRole">Role</label>
+          <select id="editRole" class="form-control" disabled></select>
+          <span class="field-hint">Automatically matches Designation</span>
+        </div>
+        <div class="field-group mb-3">
+          <label for="editReportTo">Report To</label>
+          <select id="editReportTo" class="form-control"></select>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" onclick="document.getElementById('userEditModal').classList.remove('open')">Cancel</button>
+        <button type="button" id="btnSaveUserEdit" class="btn btn-primary">Save Changes</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- =========================================================================
+       MODAL 4: Export Options (Date + Role) Before Excel Download
+       ========================================================================= -->
+  <div id="exportOptionsModal" class="modal-backdrop">
+    <div class="modal-box" style="max-width: 460px;">
+      <div class="modal-header">
+        <h3>Export Options</h3>
+        <button type="button" id="btnCloseExportModal" class="btn-close-modal">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="field-group mb-3">
+          <label for="exportFromDate">From Date</label>
+          <input type="date" id="exportFromDate" class="form-control" />
+        </div>
+        <div class="field-group mb-3">
+          <label for="exportToDate">To Date</label>
+          <input type="date" id="exportToDate" class="form-control" />
+          <span class="field-hint">Leave both blank to include users created on any date</span>
+        </div>
+        <div class="field-group mb-3">
+          <label for="exportRole">Role</label>
+          <select id="exportRole" class="form-control">
+            <option value="">All Roles (BP, Supervisor, FC sheets)</option>
+            <option value="BP">BP only</option>
+            <option value="Supervisor">Supervisor only</option>
+            <option value="FC">FC only</option>
+          </select>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="btnCancelExport" class="btn btn-secondary">Cancel</button>
+        <button type="button" id="btnConfirmExport" class="btn btn-success">
+          <span class="btn-spinner" aria-hidden="true"></span>
+          <span class="btn-label">📊 Export</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notifications Container -->
+  <div id="toastContainer"></div>
+
+  <!-- Application Scripts -->
+  <script src="js/bd-locations.js"></script>
+  <script src="js/validation.js"></script>
+  <script src="js/multiselect.js"></script>
+  <!-- Copy js/config.example.js to js/config.js and fill in your Supabase project URL/anon key -->
+  <script src="js/config.js"></script>
+  <script src="js/supabase-client.js"></script>
+  <script src="js/db-service.js"></script>
+  <script src="js/storage.js"></script>
+  <script src="js/app.js"></script>
+
+  <!-- Excel Validator & Data Cleaner Module (reuses BD_LOCATIONS/validation.js/storage.js above) -->
+  <script src="js/excel-validator/config.js"></script>
+  <script src="js/excel-validator/fuzzy-match.js"></script>
+  <script src="js/excel-validator/master-index.js"></script>
+  <script src="js/excel-validator/column-mapper.js"></script>
+  <script src="js/excel-validator/row-validator.js"></script>
+  <script src="js/excel-validator/excel-io.js"></script>
+  <script src="js/excel-validator/excel-validator-ui.js"></script>
+</body>
+</html>

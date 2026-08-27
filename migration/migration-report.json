@@ -1,0 +1,54 @@
+{
+  "total": 6,
+  "migrated": 0,
+  "skippedDuplicates": 0,
+  "failedValidation": [
+    {
+      "userCode": "USR-2026-0002",
+      "name": "Fgff",
+      "errors": [
+        "missing/invalid gender",
+        "invalid mobile format"
+      ]
+    },
+    {
+      "userCode": "USR-2026-0002",
+      "name": "Fsfds",
+      "errors": [
+        "missing/invalid gender",
+        "invalid mobile format"
+      ]
+    },
+    {
+      "userCode": "USR-2026-0006",
+      "name": "Fdfdfdgf",
+      "errors": [
+        "Report To \"Fgff\" (FC) not found/not migrated yet"
+      ]
+    },
+    {
+      "userCode": "USR-2026-0003",
+      "name": "Dfawrf",
+      "errors": [
+        "missing/invalid gender",
+        "invalid mobile format"
+      ]
+    },
+    {
+      "userCode": "USR-2026-0004",
+      "name": "Ggdfdfb",
+      "errors": [
+        "missing/invalid gender",
+        "invalid mobile format"
+      ]
+    },
+    {
+      "userCode": "USR-2026-0005",
+      "name": "Fgdfgdf",
+      "errors": [
+        "invalid mobile format"
+      ]
+    }
+  ],
+  "imageFailures": []
+}
