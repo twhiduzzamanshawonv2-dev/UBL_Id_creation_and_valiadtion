@@ -1,48 +1,71 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="User Account Creation Information Collection System replacing manual Excel collection with automated validation, Bangladesh location cascading dropdowns, auto name formatting, and Excel exports.">
-  <title>User Account Creation Information Collection System</title>
-  
+  <meta name="description"
+    content="User Account Creation Information Collection System replacing manual Excel collection with automated validation, Bangladesh location cascading dropdowns, auto name formatting, and Excel exports.">
+  <title>Univision</title>
+
   <!-- CSS Stylesheet -->
   <link rel="stylesheet" href="styles.css">
-  
+
   <!-- SheetJS Library CDN for Client-Side Excel (.xlsx) Export -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 
   <!-- Supabase JS SDK CDN (database + storage client) -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 </head>
+
 <body>
 
   <!-- Icon Sprite Sheet (Feather-style icons, referenced via <use>) -->
   <svg width="0" height="0" style="position:absolute" aria-hidden="true">
     <defs>
-      <symbol id="icon-user" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle>
+      <symbol id="icon-user" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+        stroke-linecap="round" stroke-linejoin="round">
+        <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+        <circle cx="12" cy="7" r="4"></circle>
       </symbol>
-      <symbol id="icon-phone" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"></path>
+      <symbol id="icon-phone" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+        stroke-linecap="round" stroke-linejoin="round">
+        <path
+          d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z">
+        </path>
       </symbol>
-      <symbol id="icon-mail" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline>
+      <symbol id="icon-mail" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+        stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
+        <polyline points="22,6 12,13 2,6"></polyline>
       </symbol>
-      <symbol id="icon-calendar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line>
+      <symbol id="icon-calendar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+        stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+        <line x1="16" y1="2" x2="16" y2="6"></line>
+        <line x1="8" y1="2" x2="8" y2="6"></line>
+        <line x1="3" y1="10" x2="21" y2="10"></line>
       </symbol>
-      <symbol id="icon-map-pin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle>
+      <symbol id="icon-map-pin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+        stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path>
+        <circle cx="12" cy="10" r="3"></circle>
       </symbol>
-      <symbol id="icon-briefcase" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <rect x="2" y="7" width="20" height="14" rx="2" ry="2"></rect><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path>
+      <symbol id="icon-briefcase" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+        stroke-linecap="round" stroke-linejoin="round">
+        <rect x="2" y="7" width="20" height="14" rx="2" ry="2"></rect>
+        <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path>
       </symbol>
-      <symbol id="icon-user-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="8.5" cy="7" r="4"></circle><polyline points="17,11 19,13 23,9"></polyline>
+      <symbol id="icon-user-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+        stroke-linecap="round" stroke-linejoin="round">
+        <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+        <circle cx="8.5" cy="7" r="4"></circle>
+        <polyline points="17,11 19,13 23,9"></polyline>
       </symbol>
-      <symbol id="icon-id-card" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <rect x="1" y="4" width="22" height="16" rx="2" ry="2"></rect><line x1="1" y1="10" x2="23" y2="10"></line>
+      <symbol id="icon-id-card" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+        stroke-linecap="round" stroke-linejoin="round">
+        <rect x="1" y="4" width="22" height="16" rx="2" ry="2"></rect>
+        <line x1="1" y1="10" x2="23" y2="10"></line>
       </symbol>
     </defs>
   </svg>
@@ -50,13 +73,15 @@
   <!-- App Main Header -->
   <header class="app-header">
     <div class="brand-container">
-      <div class="brand-icon">U</div>
+      <div class="brand-icon">
+        <img src="univision_logo.png" alt="Univision logo" />
+      </div>
       <div class="brand-text">
-        <h1>User Account Creation System</h1>
+        <h1>Univision</h1>
         <p>Information Collection &amp; Management Portal</p>
       </div>
     </div>
-    
+
     <nav class="app-nav">
       <button type="button" class="nav-tab active" data-view="dashboard" id="navDashboard">
         📊 Dashboard
@@ -107,7 +132,8 @@
     <section id="view-create-user" class="view-section active">
       <div class="page-title-box">
         <h2>User Registration Form</h2>
-        <p>Enter required information to create a new user account. All fields marked with (<span class="req-star">*</span>) are mandatory.</p>
+        <p>Enter required information to create a new user account. All fields marked with (<span
+            class="req-star">*</span>) are mandatory.</p>
       </div>
 
       <!-- Global Warning Banner for Duplicates -->
@@ -168,10 +194,14 @@
             <div class="field-group">
               <label for="name">Full Name <span class="req-star">*</span></label>
               <div class="input-icon-wrap">
-                <svg class="input-icon" aria-hidden="true"><use href="#icon-user"></use></svg>
-                <input type="text" id="name" class="form-control" placeholder="e.g. Md Rahim Uddin" autocomplete="off" aria-required="true" />
+                <svg class="input-icon" aria-hidden="true">
+                  <use href="#icon-user"></use>
+                </svg>
+                <input type="text" id="name" class="form-control" placeholder="e.g. Md Rahim Uddin" autocomplete="off"
+                  aria-required="true" />
               </div>
-              <span class="field-hint">Letters &amp; spaces only. Dots, commas &amp; special characters are auto-removed (e.g. Md., Rahim → Md Rahim)</span>
+              <span class="field-hint">Letters &amp; spaces only. Dots, commas &amp; special characters are auto-removed
+                (e.g. Md., Rahim → Md Rahim)</span>
               <span class="error-message" id="nameError"></span>
             </div>
 
@@ -190,10 +220,14 @@
             <div class="field-group">
               <label for="fatherName">Father's Name <span class="req-star">*</span></label>
               <div class="input-icon-wrap">
-                <svg class="input-icon" aria-hidden="true"><use href="#icon-user"></use></svg>
-                <input type="text" id="fatherName" class="form-control" placeholder="e.g. Md Abdul Karim" autocomplete="off" aria-required="true" />
+                <svg class="input-icon" aria-hidden="true">
+                  <use href="#icon-user"></use>
+                </svg>
+                <input type="text" id="fatherName" class="form-control" placeholder="e.g. Md Abdul Karim"
+                  autocomplete="off" aria-required="true" />
               </div>
-              <span class="field-hint">Letters &amp; spaces only (dots, commas &amp; special characters auto-removed)</span>
+              <span class="field-hint">Letters &amp; spaces only (dots, commas &amp; special characters
+                auto-removed)</span>
               <span class="error-message" id="fatherNameError"></span>
             </div>
 
@@ -201,16 +235,22 @@
             <div class="field-group">
               <label for="motherName">Mother's Name <span class="req-star">*</span></label>
               <div class="input-icon-wrap">
-                <svg class="input-icon" aria-hidden="true"><use href="#icon-user"></use></svg>
-                <input type="text" id="motherName" class="form-control" placeholder="e.g. Begum Fatema" autocomplete="off" aria-required="true" />
+                <svg class="input-icon" aria-hidden="true">
+                  <use href="#icon-user"></use>
+                </svg>
+                <input type="text" id="motherName" class="form-control" placeholder="e.g. Begum Fatema"
+                  autocomplete="off" aria-required="true" />
               </div>
-              <span class="field-hint">Letters &amp; spaces only (dots, commas &amp; special characters auto-removed)</span>
+              <span class="field-hint">Letters &amp; spaces only (dots, commas &amp; special characters
+                auto-removed)</span>
               <span class="error-message" id="motherNameError"></span>
             </div>
 
             <!-- Date of Birth -->
             <div class="field-group">
-              <label><svg class="label-icon" aria-hidden="true"><use href="#icon-calendar"></use></svg>Date of Birth <span class="req-star">*</span></label>
+              <label><svg class="label-icon" aria-hidden="true">
+                  <use href="#icon-calendar"></use>
+                </svg>Date of Birth <span class="req-star">*</span></label>
               <div class="dob-selects" style="display:flex;gap:0.5rem;">
                 <select id="dobDay" class="form-control" aria-label="Day" aria-required="true"></select>
                 <select id="dobMonth" class="form-control" aria-label="Month" aria-required="true"></select>
@@ -225,7 +265,8 @@
             <div class="field-group">
               <label for="userPhoto">User Photo <span class="req-star">*</span></label>
               <div class="upload-dropzone">
-                <input type="file" id="userPhoto" class="file-input-hidden" accept="image/png, image/jpeg, image/jpg" aria-required="true" />
+                <input type="file" id="userPhoto" class="file-input-hidden" accept="image/png, image/jpeg, image/jpg"
+                  aria-required="true" />
                 <div class="dropzone-content">
                   <span class="upload-icon">📷</span>
                   <strong>Upload User Photo</strong>
@@ -250,8 +291,11 @@
             <div class="field-group">
               <label for="mobile">Mobile Number <span class="req-star">*</span></label>
               <div class="input-icon-wrap">
-                <svg class="input-icon" aria-hidden="true"><use href="#icon-phone"></use></svg>
-                <input type="tel" id="mobile" class="form-control" placeholder="e.g. 01712345678" maxlength="11" aria-required="true" />
+                <svg class="input-icon" aria-hidden="true">
+                  <use href="#icon-phone"></use>
+                </svg>
+                <input type="tel" id="mobile" class="form-control" placeholder="e.g. 01712345678" maxlength="11"
+                  aria-required="true" />
               </div>
               <span class="field-hint">Exactly 11 digits Bangladesh mobile (01XXXXXXXXX)</span>
               <span class="error-message" id="mobileError"></span>
@@ -261,8 +305,11 @@
             <div class="field-group">
               <label for="email">Email <span class="req-star">*</span></label>
               <div class="input-icon-wrap">
-                <svg class="input-icon" aria-hidden="true"><use href="#icon-mail"></use></svg>
-                <input type="email" id="email" class="form-control" placeholder="e.g. example@gmail.com" autocomplete="off" aria-required="true" />
+                <svg class="input-icon" aria-hidden="true">
+                  <use href="#icon-mail"></use>
+                </svg>
+                <input type="email" id="email" class="form-control" placeholder="e.g. example@gmail.com"
+                  autocomplete="off" aria-required="true" />
               </div>
               <span class="field-hint">Enter a valid email address (e.g. name@example.com)</span>
               <span class="field-correction-message" id="emailCorrectionNote"></span>
@@ -329,7 +376,9 @@
             <div class="field-group">
               <label for="designation">Designation <span class="req-star">*</span></label>
               <div class="input-icon-wrap">
-                <svg class="input-icon" aria-hidden="true"><use href="#icon-briefcase"></use></svg>
+                <svg class="input-icon" aria-hidden="true">
+                  <use href="#icon-briefcase"></use>
+                </svg>
                 <select id="designation" class="form-control" aria-required="true">
                   <option value="">-- Select Designation --</option>
                 </select>
@@ -342,7 +391,9 @@
             <div class="field-group">
               <label for="role">Role <span class="req-star">*</span></label>
               <div class="input-icon-wrap">
-                <svg class="input-icon" aria-hidden="true"><use href="#icon-briefcase"></use></svg>
+                <svg class="input-icon" aria-hidden="true">
+                  <use href="#icon-briefcase"></use>
+                </svg>
                 <select id="role" class="form-control" aria-required="true" disabled>
                   <option value="">-- Select Role --</option>
                 </select>
@@ -354,10 +405,15 @@
             <!-- Report To (Searchable Select) - candidates depend on Designation:
                  BP -> Supervisor, Supervisor -> FC, FC -> none (disabled) -->
             <div class="field-group searchable-select-container">
-              <label for="reportToSearch" data-tooltip="BP reports to a Supervisor, Supervisor reports to an FC, FC has no Report To.">Report To <span class="req-star">*</span></label>
+              <label for="reportToSearch"
+                data-tooltip="BP reports to a Supervisor, Supervisor reports to an FC, FC has no Report To.">Report To
+                <span class="req-star">*</span></label>
               <div class="input-icon-wrap">
-                <svg class="input-icon" aria-hidden="true"><use href="#icon-user-check"></use></svg>
-                <input type="text" id="reportToSearch" class="form-control" placeholder="Select Designation first" autocomplete="off" aria-required="true" disabled />
+                <svg class="input-icon" aria-hidden="true">
+                  <use href="#icon-user-check"></use>
+                </svg>
+                <input type="text" id="reportToSearch" class="form-control" placeholder="Select Designation first"
+                  autocomplete="off" aria-required="true" disabled />
               </div>
               <input type="hidden" id="reportTo" />
               <div id="reportToDropdown" class="searchable-dropdown"></div>
@@ -377,10 +433,15 @@
           <div class="fields-row">
             <!-- NID Number -->
             <div class="field-group full-width">
-              <label for="nid" data-tooltip="Bangladesh NID numbers are 10 digits (Smart Card), 13 digits, or 17 digits long.">NID Number <span class="req-star">*</span></label>
+              <label for="nid"
+                data-tooltip="Bangladesh NID numbers are 10 digits (Smart Card), 13 digits, or 17 digits long.">NID
+                Number <span class="req-star">*</span></label>
               <div class="input-icon-wrap">
-                <svg class="input-icon" aria-hidden="true"><use href="#icon-id-card"></use></svg>
-                <input type="text" id="nid" class="form-control" placeholder="e.g. 19922692738491823" maxlength="17" aria-required="true" />
+                <svg class="input-icon" aria-hidden="true">
+                  <use href="#icon-id-card"></use>
+                </svg>
+                <input type="text" id="nid" class="form-control" placeholder="e.g. 19922692738491823" maxlength="17"
+                  aria-required="true" />
               </div>
               <span class="field-hint">Numeric only (10, 13, or 17 digits)</span>
               <span class="error-message" id="nidError"></span>
@@ -390,7 +451,8 @@
             <div class="field-group">
               <label for="nidFront">NID Front Side Image <span class="req-star">*</span></label>
               <div class="upload-dropzone">
-                <input type="file" id="nidFront" class="file-input-hidden" accept="image/png, image/jpeg, image/jpg" aria-required="true" />
+                <input type="file" id="nidFront" class="file-input-hidden" accept="image/png, image/jpeg, image/jpg"
+                  aria-required="true" />
                 <div class="dropzone-content">
                   <span class="upload-icon">🆔</span>
                   <strong>Upload NID Front Side</strong>
@@ -405,7 +467,8 @@
             <div class="field-group">
               <label for="nidBack">NID Back Side Image <span class="req-star">*</span></label>
               <div class="upload-dropzone">
-                <input type="file" id="nidBack" class="file-input-hidden" accept="image/png, image/jpeg, image/jpg" aria-required="true" />
+                <input type="file" id="nidBack" class="file-input-hidden" accept="image/png, image/jpeg, image/jpg"
+                  aria-required="true" />
                 <div class="dropzone-content">
                   <span class="upload-icon">📄</span>
                   <strong>Upload NID Back Side</strong>
@@ -454,13 +517,17 @@
             <div class="field-group mb-3">
               <label for="loginEmail">Email <span class="req-star">*</span></label>
               <div class="input-icon-wrap">
-                <svg class="input-icon" aria-hidden="true"><use href="#icon-mail"></use></svg>
-                <input type="email" id="loginEmail" name="email" class="form-control" autocomplete="username" aria-required="true" />
+                <svg class="input-icon" aria-hidden="true">
+                  <use href="#icon-mail"></use>
+                </svg>
+                <input type="email" id="loginEmail" name="email" class="form-control" autocomplete="username"
+                  aria-required="true" />
               </div>
             </div>
             <div class="field-group mb-3">
               <label for="loginPassword">Password <span class="req-star">*</span></label>
-              <input type="password" id="loginPassword" name="password" class="form-control" autocomplete="current-password" aria-required="true" />
+              <input type="password" id="loginPassword" name="password" class="form-control"
+                autocomplete="current-password" aria-required="true" />
             </div>
             <span class="error-message" id="loginError" style="display:block;margin-bottom:0.75rem;"></span>
             <button type="submit" id="btnLoginSubmit" class="btn btn-primary" style="width:100%;">
@@ -482,7 +549,7 @@
       </div>
 
       <div class="dashboard-card">
-        
+
         <!-- Filter Controls Bar -->
         <div class="filter-bar-grid">
           <div class="filter-bar-header">
@@ -575,18 +642,21 @@
 
           <!-- From Date Filter (by Created Date) -->
           <div class="field-group">
-            <label for="filterFromDate" data-tooltip="Filters by Created Date - only users created on or after this date.">From Date</label>
+            <label for="filterFromDate"
+              data-tooltip="Filters by Created Date - only users created on or after this date.">From Date</label>
             <input type="date" id="filterFromDate" class="form-control" />
           </div>
 
           <!-- To Date Filter (by Created Date) -->
           <div class="field-group">
-            <label for="filterToDate" data-tooltip="Filters by Created Date - only users created on or before this date.">To Date</label>
+            <label for="filterToDate"
+              data-tooltip="Filters by Created Date - only users created on or before this date.">To Date</label>
             <input type="date" id="filterToDate" class="form-control" />
           </div>
 
           <!-- Filter Action Buttons -->
-          <div class="field-group full-width" style="display: flex; gap: 0.75rem; justify-content: flex-end; align-items: flex-end;">
+          <div class="field-group full-width"
+            style="display: flex; gap: 0.75rem; justify-content: flex-end; align-items: flex-end;">
             <button type="button" id="btnResetFilters" class="btn btn-outline">Clear Filters</button>
             <button type="button" id="btnRefreshUsers" class="btn btn-outline">
               <span class="btn-spinner" aria-hidden="true"></span>
@@ -693,7 +763,13 @@
         <div class="table-responsive">
           <table class="data-table">
             <thead>
-              <tr><th>User ID</th><th>Name</th><th>Designation</th><th>Status</th><th>Created Date</th></tr>
+              <tr>
+                <th>User ID</th>
+                <th>Name</th>
+                <th>Designation</th>
+                <th>Status</th>
+                <th>Created Date</th>
+              </tr>
             </thead>
             <tbody id="dashboardRecentUsersBody">
               <!-- Dynamically Populated -->
@@ -723,7 +799,12 @@
         <div class="table-responsive">
           <table class="data-table">
             <thead>
-              <tr><th>Name</th><th>Status</th><th>Created Date</th><th style="width:170px;">Actions</th></tr>
+              <tr>
+                <th>Name</th>
+                <th>Status</th>
+                <th>Created Date</th>
+                <th style="width:170px;">Actions</th>
+              </tr>
             </thead>
             <tbody id="agenciesTableBody">
               <!-- Dynamically Populated -->
@@ -759,7 +840,13 @@
         <div class="table-responsive">
           <table class="data-table">
             <thead>
-              <tr><th>Campaign Name</th><th>Agency</th><th>Status</th><th>Created Date</th><th style="width:220px;">Actions</th></tr>
+              <tr>
+                <th>Campaign Name</th>
+                <th>Agency</th>
+                <th>Status</th>
+                <th>Created Date</th>
+                <th style="width:220px;">Actions</th>
+              </tr>
             </thead>
             <tbody id="campaignsTableBody">
               <!-- Dynamically Populated -->
@@ -779,7 +866,8 @@
     <section id="view-campaign-logins" class="view-section">
       <div class="page-title-box">
         <h2>Campaign Logins</h2>
-        <p>Link an existing Supabase Auth account to a role and a permanent Agency + Campaign scope. Create the auth account first in Supabase Dashboard &rarr; Authentication &rarr; Users, then link it here.</p>
+        <p>Link an existing Supabase Auth account to a role and a permanent Agency + Campaign scope. Create the auth
+          account first in Supabase Dashboard &rarr; Authentication &rarr; Users, then link it here.</p>
       </div>
 
       <div class="dashboard-card">
@@ -793,7 +881,14 @@
         <div class="table-responsive">
           <table class="data-table">
             <thead>
-              <tr><th>Username / Email</th><th>Role</th><th>Agency</th><th>Campaign</th><th>Status</th><th>Actions</th></tr>
+              <tr>
+                <th>Username / Email</th>
+                <th>Role</th>
+                <th>Agency</th>
+                <th>Campaign</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
             </thead>
             <tbody id="campaignLoginsTableBody">
               <!-- Dynamically Populated -->
@@ -809,7 +904,8 @@
     <section id="view-export" class="view-section">
       <div class="page-title-box">
         <h2>Export</h2>
-        <p>Export user data filtered by Agency, Campaign, and Role - or export one whole Campaign with separate Role-wise sheets.</p>
+        <p>Export user data filtered by Agency, Campaign, and Role - or export one whole Campaign with separate
+          Role-wise sheets.</p>
       </div>
 
       <div class="form-grid">
@@ -872,7 +968,8 @@
             <div class="card-step-badge">2</div>
             <h3>Export Campaign Data</h3>
           </div>
-          <p class="text-muted" style="margin-bottom: 0.75rem;">Pick one Campaign to export a single workbook with separate BP / Supervisor / FC sheets - useful for campaign-wise operational management.</p>
+          <p class="text-muted" style="margin-bottom: 0.75rem;">Pick one Campaign to export a single workbook with
+            separate BP / Supervisor / FC sheets - useful for campaign-wise operational management.</p>
 
           <div class="fields-row">
             <div class="field-group">
@@ -899,14 +996,19 @@
     <section id="view-excel-validator" class="view-section">
       <div class="page-title-box">
         <h2>Excel Validator &amp; Data Cleaner</h2>
-        <p>Upload any Excel/CSV file, auto-detect its columns, validate every field against the existing location, designation, role, DOB and phone rules, and download a corrected file.</p>
+        <p>Upload any Excel/CSV file, auto-detect its columns, validate every field against the existing location,
+          designation, role, DOB and phone rules, and download a corrected file.</p>
       </div>
 
       <div class="ev-stepper" id="evStepper">
-        <div class="ev-step-dot active" data-step="upload"><span class="ev-step-num">1</span><span class="ev-step-label">Upload</span></div>
-        <div class="ev-step-dot" data-step="mapping"><span class="ev-step-num">2</span><span class="ev-step-label">Map Columns</span></div>
-        <div class="ev-step-dot" data-step="validate"><span class="ev-step-num">3</span><span class="ev-step-label">Validate</span></div>
-        <div class="ev-step-dot" data-step="review"><span class="ev-step-num">4</span><span class="ev-step-label">Review &amp; Download</span></div>
+        <div class="ev-step-dot active" data-step="upload"><span class="ev-step-num">1</span><span
+            class="ev-step-label">Upload</span></div>
+        <div class="ev-step-dot" data-step="mapping"><span class="ev-step-num">2</span><span class="ev-step-label">Map
+            Columns</span></div>
+        <div class="ev-step-dot" data-step="validate"><span class="ev-step-num">3</span><span
+            class="ev-step-label">Validate</span></div>
+        <div class="ev-step-dot" data-step="review"><span class="ev-step-num">4</span><span class="ev-step-label">Review
+            &amp; Download</span></div>
       </div>
 
       <!-- Step 1: Upload -->
@@ -935,12 +1037,15 @@
               <button type="button" id="evBtnRemoveFile" class="btn btn-secondary btn-sm">Remove</button>
             </div>
             <div id="evUploadProgressWrap" class="ev-progress-wrap" style="display:none;">
-              <div class="ev-progress-bar"><div id="evUploadProgressFill" class="ev-progress-fill"></div></div>
+              <div class="ev-progress-bar">
+                <div id="evUploadProgressFill" class="ev-progress-fill"></div>
+              </div>
             </div>
           </div>
 
           <div class="ev-actions">
-            <button type="button" id="evBtnToMapping" class="btn btn-primary" disabled>Continue to Column Mapping →</button>
+            <button type="button" id="evBtnToMapping" class="btn btn-primary" disabled>Continue to Column Mapping
+              →</button>
           </div>
         </div>
       </div>
@@ -952,10 +1057,17 @@
             <div class="card-step-badge">2</div>
             <h3>Detected Column Mapping</h3>
           </div>
-          <p class="text-muted" style="margin-bottom:0.75rem;">Review how your columns were mapped to system fields. Adjust any that weren't detected confidently using the dropdown.</p>
+          <p class="text-muted" style="margin-bottom:0.75rem;">Review how your columns were mapped to system fields.
+            Adjust any that weren't detected confidently using the dropdown.</p>
           <div class="ev-table-wrap">
             <table class="data-table" id="evMappingTable">
-              <thead><tr><th>Uploaded Column</th><th>System Field</th><th>Confidence</th></tr></thead>
+              <thead>
+                <tr>
+                  <th>Uploaded Column</th>
+                  <th>System Field</th>
+                  <th>Confidence</th>
+                </tr>
+              </thead>
               <tbody id="evMappingTableBody"></tbody>
             </table>
           </div>
@@ -974,7 +1086,9 @@
             <h3>Validating Data…</h3>
           </div>
           <div class="ev-progress-wrap">
-            <div class="ev-progress-bar"><div id="evValidateProgressFill" class="ev-progress-fill"></div></div>
+            <div class="ev-progress-bar">
+              <div id="evValidateProgressFill" class="ev-progress-fill"></div>
+            </div>
           </div>
           <p class="text-muted" id="evValidateProgressText">Validating 0 / 0 rows</p>
         </div>
@@ -997,19 +1111,24 @@
             <button type="button" class="ev-filter-btn" data-filter="invalid">Invalid</button>
             <button type="button" class="ev-filter-btn" data-filter="review">Needs Review</button>
             <span class="ev-filter-bar-spacer"></span>
-            <button type="button" id="evBtnAcceptAllReviews" class="btn btn-outline btn-sm">✓ Accept All Suggestions</button>
-            <button type="button" id="evBtnDeclineAllReviews" class="btn btn-outline btn-sm">✕ Decline All Suggestions</button>
+            <button type="button" id="evBtnAcceptAllReviews" class="btn btn-outline btn-sm">✓ Accept All
+              Suggestions</button>
+            <button type="button" id="evBtnDeclineAllReviews" class="btn btn-outline btn-sm">✕ Decline All
+              Suggestions</button>
           </div>
 
           <div class="ev-table-wrap">
             <table class="data-table" id="evReviewTable">
-              <thead><tr id="evReviewTableHead"></tr></thead>
+              <thead>
+                <tr id="evReviewTableHead"></tr>
+              </thead>
               <tbody id="evReviewTableBody"></tbody>
             </table>
           </div>
 
           <div class="ev-actions">
-            <button type="button" id="evBtnBackToUploadFromReview" class="btn btn-secondary">↺ Validate Another File</button>
+            <button type="button" id="evBtnBackToUploadFromReview" class="btn btn-secondary">↺ Validate Another
+              File</button>
             <button type="button" id="evBtnDownload" class="btn btn-success">⬇️ Download Corrected Excel</button>
           </div>
         </div>
@@ -1053,7 +1172,8 @@
         <!-- User Details Injected Here -->
       </div>
       <div class="modal-footer">
-        <button type="button" class="btn btn-secondary" onclick="document.getElementById('userDetailModal').classList.remove('open')">Close</button>
+        <button type="button" class="btn btn-secondary"
+          onclick="document.getElementById('userDetailModal').classList.remove('open')">Close</button>
       </div>
     </div>
   </div>
@@ -1092,7 +1212,8 @@
         </div>
       </div>
       <div class="modal-footer">
-        <button type="button" class="btn btn-secondary" onclick="document.getElementById('userEditModal').classList.remove('open')">Cancel</button>
+        <button type="button" class="btn btn-secondary"
+          onclick="document.getElementById('userEditModal').classList.remove('open')">Cancel</button>
         <button type="button" id="btnSaveUserEdit" class="btn btn-primary">Save Changes</button>
       </div>
     </div>
@@ -1111,7 +1232,8 @@
         <input type="hidden" id="agencyId" />
         <div class="field-group mb-3">
           <label for="agencyName">Agency Name</label>
-          <input type="text" id="agencyName" class="form-control" placeholder="e.g. Asiatic Experiential Marketing Ltd." />
+          <input type="text" id="agencyName" class="form-control"
+            placeholder="e.g. Asiatic Experiential Marketing Ltd." />
           <span class="error-message" id="agencyNameError"></span>
         </div>
         <div class="field-group mb-3" id="agencyStatusGroup" style="display:none;">
@@ -1206,19 +1328,26 @@
       </div>
       <div class="modal-body">
         <div class="field-group mb-3" id="campaignLoginUserIdGroup">
-          <label for="campaignLoginUserId" data-tooltip="Copy this from Supabase Dashboard -> Authentication -> Users -> (click the user) -> User UID.">User ID (UUID) <span class="req-star">*</span></label>
-          <input type="text" id="campaignLoginUserId" class="form-control" placeholder="e.g. 8b6f0c9e-1234-4a5b-9abc-1234567890ab" />
-          <span class="field-hint">Copy from Supabase Dashboard &rarr; Authentication &rarr; Users. Create the account there first if it doesn't exist yet.</span>
+          <label for="campaignLoginUserId"
+            data-tooltip="Copy this from Supabase Dashboard -> Authentication -> Users -> (click the user) -> User UID.">User
+            ID (UUID) <span class="req-star">*</span></label>
+          <input type="text" id="campaignLoginUserId" class="form-control"
+            placeholder="e.g. 8b6f0c9e-1234-4a5b-9abc-1234567890ab" />
+          <span class="field-hint">Copy from Supabase Dashboard &rarr; Authentication &rarr; Users. Create the account
+            there first if it doesn't exist yet.</span>
           <span class="error-message" id="campaignLoginUserIdError"></span>
         </div>
         <div class="field-group mb-3">
           <label for="campaignLoginUsername">Username</label>
-          <input type="text" id="campaignLoginUsername" class="form-control" placeholder="e.g. asiatic_horlicks_school" />
+          <input type="text" id="campaignLoginUsername" class="form-control"
+            placeholder="e.g. asiatic_horlicks_school" />
         </div>
         <div class="field-group mb-3">
           <label for="campaignLoginEmail">Email</label>
-          <input type="email" id="campaignLoginEmail" class="form-control" placeholder="e.g. asiatic.horlicks@example.com" />
-          <span class="field-hint">Informational label only - must match the linked Supabase Auth account for clarity, but sign-in itself uses that account's real credentials.</span>
+          <input type="email" id="campaignLoginEmail" class="form-control"
+            placeholder="e.g. asiatic.horlicks@example.com" />
+          <span class="field-hint">Informational label only - must match the linked Supabase Auth account for clarity,
+            but sign-in itself uses that account's real credentials.</span>
         </div>
         <div class="field-group mb-3">
           <label for="campaignLoginRole">Role</label>
@@ -1249,7 +1378,8 @@
             <option value="Inactive">Inactive</option>
             <option value="Suspended">Suspended</option>
           </select>
-          <span class="field-hint">Inactive/Suspended accounts are immediately blocked from logging in and lose all data access.</span>
+          <span class="field-hint">Inactive/Suspended accounts are immediately blocked from logging in and lose all data
+            access.</span>
         </div>
       </div>
       <div class="modal-footer">
@@ -1286,4 +1416,5 @@
   <script src="js/excel-validator/excel-io.js"></script>
   <script src="js/excel-validator/excel-validator-ui.js"></script>
 </body>
+
 </html>
