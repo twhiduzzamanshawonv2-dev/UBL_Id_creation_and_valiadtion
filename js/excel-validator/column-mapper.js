@@ -22,7 +22,7 @@
     { field: 'designation', label: 'Designation', synonyms: ['DESIGNATION', 'POST', 'POSITION'] },
     { field: 'role', label: 'Role', synonyms: ['ROLE'] },
     { field: 'nid', label: 'NID Number', synonyms: ['NID', 'NID NUMBER', 'NATIONAL ID', 'NID NO'] },
-    { field: 'reportTo', label: 'Report To', synonyms: ['REPORT TO', 'REPORTING TO'] }
+    { field: 'reportTo', label: 'Report To', synonyms: ['REPORT TO', 'REPORTING TO', 'SUPERVISOR', 'SUPERVISOR NAME'] }
   ];
 
   const HIGH_CONFIDENCE_SCORE = 95;

@@ -1049,6 +1049,41 @@
               →</button>
           </div>
         </div>
+
+        <div class="form-card">
+          <div class="card-header-box">
+            <h3>Reference Excel File <span class="text-muted">(Optional)</span></h3>
+          </div>
+          <p class="text-muted" style="margin-bottom:0.75rem;">Upload a reference file containing the
+            correct/standard names to use for the <strong>Report To</strong> field. Any column layout is fine — the
+            Name column is detected automatically. Leave this empty and the validator works exactly as before.</p>
+
+          <div class="ev-dropzone" id="evRefDropzone">
+            <input type="file" id="evRefFileInput" class="file-input-hidden" accept=".xlsx,.xls,.csv" />
+            <div class="dropzone-content">
+              <span class="upload-icon">📥</span>
+              <p><strong>Drag &amp; drop</strong> your Reference Excel or CSV file here</p>
+              <p class="text-muted">or click to browse — .xlsx, .xls, .csv (max 15MB)</p>
+            </div>
+          </div>
+
+          <div id="evRefFileInfo" class="ev-file-info" style="display:none;">
+            <div class="ev-file-info-row">
+              <div>
+                <div class="file-name" id="evRefFileName"></div>
+                <div class="text-muted" id="evRefFileMeta"></div>
+              </div>
+              <button type="button" id="evBtnRemoveRefFile" class="btn btn-secondary btn-sm">Remove</button>
+            </div>
+            <div id="evRefUploadProgressWrap" class="ev-progress-wrap" style="display:none;">
+              <div class="ev-progress-bar">
+                <div id="evRefUploadProgressFill" class="ev-progress-fill"></div>
+              </div>
+            </div>
+          </div>
+          <p class="text-muted" style="margin-top:0.5rem; margin-bottom:0;">Optional — the validator will work
+            without this file.</p>
+        </div>
       </div>
 
       <!-- Step 2: Column Mapping -->
@@ -1098,6 +1133,38 @@
       <!-- Step 4: Review & Download -->
       <div class="ev-panel" id="evPanelReview">
         <div class="ev-dashboard" id="evDashboard"></div>
+
+        <div class="form-card" id="evReportToSummary" style="display:none;"></div>
+
+        <div class="ev-actions" style="margin-bottom:1rem;">
+          <button type="button" id="evBtnToggleReportToLog" class="btn btn-outline btn-sm" style="display:none;">🧾
+            View Report To Change Log</button>
+        </div>
+
+        <div class="form-card" id="evReportToChangeLogWrap" style="display:none;">
+          <div class="card-header-box">
+            <h3>Report To Change Log</h3>
+          </div>
+          <p class="text-muted" style="margin-bottom:0.75rem;">Full audit trail of every Report To value the system
+            suggested, applied, or flagged against the Reference Excel — including declined and pending
+            suggestions.</p>
+          <div class="ev-table-wrap">
+            <table class="data-table" id="evReportToChangeLogTable">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Original</th>
+                  <th>Changed To</th>
+                  <th>Reason</th>
+                  <th>Matching Method</th>
+                  <th>Confidence</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="evReportToChangeLogBody"></tbody>
+            </table>
+          </div>
+        </div>
 
         <div class="form-card">
           <div class="card-header-box">
@@ -1413,6 +1480,7 @@
   <script src="js/excel-validator/fuzzy-match.js"></script>
   <script src="js/excel-validator/master-index.js"></script>
   <script src="js/excel-validator/column-mapper.js"></script>
+  <script src="js/excel-validator/reference-matcher.js"></script>
   <script src="js/excel-validator/row-validator.js"></script>
   <script src="js/excel-validator/excel-io.js"></script>
   <script src="js/excel-validator/excel-validator-ui.js"></script>

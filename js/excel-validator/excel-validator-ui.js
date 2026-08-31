@@ -17,7 +17,9 @@ document.addEventListener('DOMContentLoaded', () => {
     rawRows: [],
     mapping: [],
     processedRows: [],
-    filter: 'all'
+    filter: 'all',
+    referenceFile: null,
+    referenceIndex: null
   };
 
   const els = {
@@ -45,7 +47,20 @@ document.addEventListener('DOMContentLoaded', () => {
     btnBackToUploadFromReview: document.getElementById('evBtnBackToUploadFromReview'),
     btnDownload: document.getElementById('evBtnDownload'),
     btnAcceptAllReviews: document.getElementById('evBtnAcceptAllReviews'),
-    btnDeclineAllReviews: document.getElementById('evBtnDeclineAllReviews')
+    btnDeclineAllReviews: document.getElementById('evBtnDeclineAllReviews'),
+
+    refDropzone: document.getElementById('evRefDropzone'),
+    refFileInput: document.getElementById('evRefFileInput'),
+    refFileInfo: document.getElementById('evRefFileInfo'),
+    refFileName: document.getElementById('evRefFileName'),
+    refFileMeta: document.getElementById('evRefFileMeta'),
+    btnRemoveRefFile: document.getElementById('evBtnRemoveRefFile'),
+    refUploadProgressWrap: document.getElementById('evRefUploadProgressWrap'),
+    refUploadProgressFill: document.getElementById('evRefUploadProgressFill'),
+    reportToSummary: document.getElementById('evReportToSummary'),
+    btnToggleReportToLog: document.getElementById('evBtnToggleReportToLog'),
+    reportToChangeLogWrap: document.getElementById('evReportToChangeLogWrap'),
+    reportToChangeLogBody: document.getElementById('evReportToChangeLogBody')
   };
 
   const REVIEW_TABLE_ROW_CAP = 500;
@@ -102,11 +117,30 @@ document.addEventListener('DOMContentLoaded', () => {
     state.mapping = [];
     state.processedRows = [];
     state.filter = 'all';
+    state.referenceFile = null;
+    state.referenceIndex = null;
+    if (window.clearReferenceNameIndex) window.clearReferenceNameIndex();
     els.fileInput.value = '';
     els.fileInfo.style.display = 'none';
     els.uploadProgressWrap.style.display = 'none';
     els.uploadProgressFill.style.width = '0%';
     els.btnToMapping.disabled = true;
+    if (els.refFileInput) els.refFileInput.value = '';
+    if (els.refFileInfo) els.refFileInfo.style.display = 'none';
+    if (els.refUploadProgressWrap) {
+      els.refUploadProgressWrap.style.display = 'none';
+      els.refUploadProgressFill.style.width = '0%';
+    }
+    if (els.reportToSummary) {
+      els.reportToSummary.style.display = 'none';
+      els.reportToSummary.innerHTML = '';
+    }
+    if (els.reportToChangeLogWrap) els.reportToChangeLogWrap.style.display = 'none';
+    if (els.reportToChangeLogBody) els.reportToChangeLogBody.innerHTML = '';
+    if (els.btnToggleReportToLog) {
+      els.btnToggleReportToLog.style.display = 'none';
+      els.btnToggleReportToLog.textContent = '🧾 View Report To Change Log';
+    }
     setStep('upload');
   }
 
@@ -185,6 +219,90 @@ document.addEventListener('DOMContentLoaded', () => {
     if (e.target.files && e.target.files[0]) handleFileSelected(e.target.files[0]);
   });
   els.btnRemoveFile.addEventListener('click', () => resetAll());
+
+  /* ---------------------------------------------------------------------
+     Optional: Reference Excel File (Report To standardization source)
+     Fully independent of the main upload above - skipping this section
+     entirely leaves Workflow A (no reference file) unaffected.
+     --------------------------------------------------------------------- */
+  async function handleReferenceFileSelected(file) {
+    if (!file || !els.refDropzone) return;
+
+    if (!isAllowedFile(file)) {
+      showToast('Unsupported reference file type. Please upload a .xlsx, .xls, or .csv file.', 'danger');
+      return;
+    }
+    const maxBytes = cfg.MAX_FILE_SIZE_MB * 1024 * 1024;
+    if (file.size > maxBytes) {
+      showToast(`Reference file is too large. Maximum allowed size is ${cfg.MAX_FILE_SIZE_MB}MB.`, 'danger');
+      return;
+    }
+
+    els.refFileName.textContent = file.name;
+    els.refFileMeta.textContent = 'Reading reference file...';
+    els.refFileInfo.style.display = 'block';
+    els.refUploadProgressWrap.style.display = 'block';
+    els.refUploadProgressFill.style.width = '0%';
+
+    try {
+      const parsed = await window.readReferenceWorkbookFile(file, pct => {
+        els.refUploadProgressFill.style.width = pct + '%';
+      });
+      const index = window.buildReferenceNameIndex(parsed.sheets);
+
+      if (!index || index.entries.length === 0) {
+        state.referenceFile = null;
+        state.referenceIndex = null;
+        if (window.clearReferenceNameIndex) window.clearReferenceNameIndex();
+        els.refFileInfo.style.display = 'none';
+        els.refFileInput.value = '';
+        showToast('Reference file could not be processed. We couldn\'t find a suitable Name column in the uploaded file. Please upload a reference file containing a Name/Employee Name/Full Name column.', 'danger');
+        return;
+      }
+
+      state.referenceFile = file;
+      state.referenceIndex = index;
+      window.setReferenceNameIndex(index);
+
+      els.refFileMeta.textContent = `${index.entries.length.toLocaleString()} unique name(s) found across ${index.usableSheets} sheet(s) · ${(file.size / 1024).toFixed(1)} KB`;
+      showToast('Reference file uploaded. Report To values will be matched against it.', 'success');
+    } catch (err) {
+      state.referenceFile = null;
+      state.referenceIndex = null;
+      if (window.clearReferenceNameIndex) window.clearReferenceNameIndex();
+      els.refFileInfo.style.display = 'none';
+      showToast(err.message || 'Failed to read the reference file.', 'danger');
+    } finally {
+      els.refUploadProgressWrap.style.display = 'none';
+    }
+  }
+
+  if (els.refDropzone) {
+    els.refDropzone.addEventListener('click', () => els.refFileInput.click());
+    els.refDropzone.addEventListener('dragover', e => {
+      e.preventDefault();
+      els.refDropzone.classList.add('ev-dropzone-active');
+    });
+    els.refDropzone.addEventListener('dragleave', () => els.refDropzone.classList.remove('ev-dropzone-active'));
+    els.refDropzone.addEventListener('drop', e => {
+      e.preventDefault();
+      els.refDropzone.classList.remove('ev-dropzone-active');
+      if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+        handleReferenceFileSelected(e.dataTransfer.files[0]);
+      }
+    });
+    els.refFileInput.addEventListener('change', e => {
+      if (e.target.files && e.target.files[0]) handleReferenceFileSelected(e.target.files[0]);
+    });
+    els.btnRemoveRefFile.addEventListener('click', () => {
+      state.referenceFile = null;
+      state.referenceIndex = null;
+      if (window.clearReferenceNameIndex) window.clearReferenceNameIndex();
+      els.refFileInput.value = '';
+      els.refFileInfo.style.display = 'none';
+      showToast('Reference file removed.', 'info');
+    });
+  }
 
   els.btnToMapping.addEventListener('click', () => {
     if (!state.headers.length) return;
@@ -310,6 +428,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function finishValidation() {
     renderDashboard();
+    renderReportToSummary();
     renderReviewTable();
     setStep('review');
   }
@@ -356,6 +475,139 @@ document.addEventListener('DOMContentLoaded', () => {
     `).join('');
   }
 
+  // Human-readable labels for reference-matcher.js's matchingMethod enum (spec #13),
+  // shared by the correction-note card and the Change Log table.
+  const MATCH_METHOD_LABELS = {
+    exact_match: 'Exact Match',
+    case_insensitive_match: 'Case-Insensitive Match',
+    normalized_match: 'Normalized Match (Spacing)',
+    punctuation_match: 'Punctuation-Normalized Match',
+    token_match: 'Token-Based Match',
+    token_order_match: 'Token-Based Match (Name Order)',
+    fuzzy_match: 'Fuzzy Name Match',
+    context_aware_match: 'Context-Aware Match'
+  };
+
+  function matchMethodLabel(method) {
+    return MATCH_METHOD_LABELS[method] || (method ? method : '—');
+  }
+
+  // Change History status label for one Report To field result (spec #2/#7) - distinct
+  // from the generic field status ('valid'/'corrected'/'review'/'invalid') because the
+  // audit trail needs to say "Accepted (Auto)" for an already-applied auto-fix, not just
+  // "Corrected". Returns null for rows that don't belong in the Change Log at all (no
+  // match attempted, or already an exact match with nothing to record).
+  function reportToLogStatus(f) {
+    if (!f) return null;
+    if (f.status === 'corrected') return 'Accepted (Auto)';
+    if (f.status === 'review') {
+      if (f.resolution === 'accepted') return 'Accepted';
+      if (f.resolution === 'declined') return 'Declined';
+      return 'Pending';
+    }
+    if (f.warning && f.matchingMethod) return 'Possible Match (Not Applied)';
+    if (f.warning && !f.matchingMethod) return 'Ambiguous - Manual Review';
+    return null; // exact-match-unchanged ("Valid.") or no confident match - nothing to log
+  }
+
+  // Summary of Report To reference matching (spec #8/#25) - only rendered when both a
+  // Reference Excel was uploaded and Report To was actually mapped on the Main Excel;
+  // otherwise stays hidden (Workflow A keeps the review screen exactly as before).
+  function renderReportToSummary() {
+    if (!els.reportToSummary) return;
+    const reportToMapped = state.mapping.some(m => m.field === 'reportTo');
+    if (!reportToMapped || !state.referenceIndex) {
+      els.reportToSummary.style.display = 'none';
+      els.reportToSummary.innerHTML = '';
+      if (els.reportToChangeLogWrap) els.reportToChangeLogWrap.style.display = 'none';
+      if (els.btnToggleReportToLog) els.btnToggleReportToLog.style.display = 'none';
+      return;
+    }
+
+    let total = 0, exact = 0, suggested = 0, accepted = 0, declined = 0, noMatch = 0, changesApplied = 0;
+    state.processedRows.forEach(({ result }) => {
+      const f = result.fields.reportTo;
+      if (!f || String(f.original ?? '').trim() === '') return;
+      total++;
+      if (f.reason === 'Valid.') { exact++; return; }
+      if (f.status === 'corrected') { suggested++; accepted++; changesApplied++; return; }
+      if (f.status === 'review') {
+        suggested++;
+        if (f.resolution === 'accepted') { accepted++; changesApplied++; }
+        else if (f.resolution === 'declined') declined++;
+        return;
+      }
+      if (!f.matchingMethod && !f.warning) noMatch++; // no confident match at all (ambiguous/possible tracked in the change log instead)
+    });
+
+    els.reportToSummary.innerHTML = `
+      <div class="card-header-box"><h3>Report To Validation Summary</h3></div>
+      <p class="text-muted" style="margin-bottom:0.75rem;">Reference file: <strong>${escapeHtml(state.referenceFile ? state.referenceFile.name : '')}</strong></p>
+      <div class="ev-dashboard">
+        <div class="ev-dashboard-tile"><div class="ev-dashboard-value">${total.toLocaleString()}</div><div class="ev-dashboard-label">Total Report To Values</div></div>
+        <div class="ev-dashboard-tile ev-tile-valid"><div class="ev-dashboard-value">${exact.toLocaleString()}</div><div class="ev-dashboard-label">Exact Matches</div></div>
+        <div class="ev-dashboard-tile ev-tile-review"><div class="ev-dashboard-value">${suggested.toLocaleString()}</div><div class="ev-dashboard-label">Suggested Corrections</div></div>
+        <div class="ev-dashboard-tile ev-tile-corrected"><div class="ev-dashboard-value">${accepted.toLocaleString()}</div><div class="ev-dashboard-label">Accepted Corrections</div></div>
+        <div class="ev-dashboard-tile"><div class="ev-dashboard-value">${declined.toLocaleString()}</div><div class="ev-dashboard-label">Declined Corrections</div></div>
+        <div class="ev-dashboard-tile ev-tile-invalid"><div class="ev-dashboard-value">${noMatch.toLocaleString()}</div><div class="ev-dashboard-label">No Match Found</div></div>
+        <div class="ev-dashboard-tile ev-tile-corrected"><div class="ev-dashboard-value">${changesApplied.toLocaleString()}</div><div class="ev-dashboard-label">Total Changes Applied</div></div>
+      </div>`;
+    els.reportToSummary.style.display = 'block';
+
+    if (els.btnToggleReportToLog) els.btnToggleReportToLog.style.display = 'inline-flex';
+    renderReportToChangeLog();
+  }
+
+  const REPORT_TO_LOG_ROW_CAP = 500;
+
+  // Detailed Report To Change Log (spec #9) - every row where a correction was suggested,
+  // applied, or flagged (possible/ambiguous), so the user can audit the full history
+  // before downloading. Exact matches and "no match found" rows need no action, so they're
+  // left out of this table (they still count in the summary tiles above).
+  function renderReportToChangeLog() {
+    if (!els.reportToChangeLogWrap || !els.reportToChangeLogBody) return;
+
+    const entries = [];
+    state.processedRows.forEach(({ result }, rowIndex) => {
+      const f = result.fields.reportTo;
+      const status = reportToLogStatus(f);
+      if (!status) return;
+      entries.push({ rowIndex, f, status });
+    });
+
+    if (entries.length === 0) {
+      els.reportToChangeLogBody.innerHTML = '<tr><td colspan="7" class="text-center py-4 text-muted">No Report To corrections to show.</td></tr>';
+      return;
+    }
+
+    const shown = entries.slice(0, REPORT_TO_LOG_ROW_CAP);
+    els.reportToChangeLogBody.innerHTML = shown.map(({ rowIndex, f, status }) => {
+      const changedTo = f.suggested != null ? f.suggested : (f.status === 'corrected' ? f.corrected : f.original);
+      return `<tr>
+        <td>${rowIndex + 1}</td>
+        <td>${escapeHtml(f.original)}</td>
+        <td>${escapeHtml(changedTo)}</td>
+        <td>${escapeHtml(f.reason || '')}</td>
+        <td>${escapeHtml(matchMethodLabel(f.matchingMethod))}</td>
+        <td>${f.confidence}%</td>
+        <td>${escapeHtml(status)}</td>
+      </tr>`;
+    }).join('');
+
+    if (entries.length > REPORT_TO_LOG_ROW_CAP) {
+      els.reportToChangeLogBody.innerHTML += `<tr><td colspan="7" class="text-center py-3 text-muted">Showing first ${REPORT_TO_LOG_ROW_CAP.toLocaleString()} of ${entries.length.toLocaleString()} logged change(s).</td></tr>`;
+    }
+  }
+
+  if (els.btnToggleReportToLog) {
+    els.btnToggleReportToLog.addEventListener('click', () => {
+      if (!els.reportToChangeLogWrap) return;
+      const showing = els.reportToChangeLogWrap.style.display !== 'none';
+      els.reportToChangeLogWrap.style.display = showing ? 'none' : 'block';
+      els.btnToggleReportToLog.textContent = showing ? '🧾 View Report To Change Log' : '🧾 Hide Report To Change Log';
+    });
+  }
+
   els.filterBar.addEventListener('click', e => {
     const btn = e.target.closest('.ev-filter-btn');
     if (!btn) return;
@@ -388,7 +640,15 @@ document.addEventListener('DOMContentLoaded', () => {
     // status === 'review': needs an explicit user decision - show the suggested change plus
     // Accept/Decline (or, once resolved, the outcome and an Undo link back to unresolved).
     const target = escapeHtml(displayValue(fieldResult.suggested));
-    const diffLine = `<span class="ev-diff ev-diff-review" title="${escapeHtml(fieldResult.message || '')}">${orig} <span class="ev-diff-arrow">→</span> ${target} <span class="ev-confidence">${fieldResult.confidence}%</span></span>`;
+
+    // Report To Correction Note: just the plain "Original -> Suggested" change, same
+    // compact shape as every other field's review diff. The full reason/matching
+    // method/source (spec #2/#12) are still there on hover and in the Report To Change
+    // Log (spec #9) for anyone who wants the detail - they're just not forced into view here.
+    const noteTitle = fieldKey === 'reportTo'
+      ? `${escapeHtml(fieldResult.reason || '')} (${escapeHtml(matchMethodLabel(fieldResult.matchingMethod))}, source: ${escapeHtml(fieldResult.source || '')})`
+      : escapeHtml(fieldResult.message || '');
+    const diffLine = `<span class="ev-diff ev-diff-review" title="${noteTitle}">${orig} <span class="ev-diff-arrow">→</span> ${target} <span class="ev-confidence">${fieldResult.confidence}%</span></span>`;
 
     if (!fieldResult.resolution) {
       return `<div class="ev-review-cell">${diffLine}<div class="ev-review-actions">
@@ -464,6 +724,7 @@ document.addEventListener('DOMContentLoaded', () => {
     else fieldResult.resolution = null;
 
     renderDashboard();
+    if (fieldKey === 'reportTo') renderReportToSummary();
     renderReviewTable();
   });
 
@@ -482,6 +743,7 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
     renderDashboard();
+    renderReportToSummary();
     renderReviewTable();
     showToast(`${resolution === 'accepted' ? 'Accepted' : 'Declined'} ${count} pending suggestion(s).`, 'success');
   }

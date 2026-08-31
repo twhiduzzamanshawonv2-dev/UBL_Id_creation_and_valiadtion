@@ -421,6 +421,137 @@
   }
 
   /* ---------------------------------------------------------------------
+     Report To - optional Reference Excel matching (reference-matcher.js).
+     Completely inert (no field entry is created at all) unless a Reference
+     Excel has been uploaded and indexed, so Workflow A (no reference file)
+     behaves exactly as it did before this feature existed.
+     --------------------------------------------------------------------- */
+  // Report To Correction Notes / Change History - every match is labeled with WHY it
+  // matched (matchingMethod, from reference-matcher.js's determineMatchMethod) and a
+  // matching human-readable reason, plus the source of the correction. These live
+  // directly on the field result object (reason/matchingMethod/source) alongside the
+  // existing original/corrected/suggested/confidence/status/resolution shape, so every
+  // existing consumer (review table, export, Accept/Decline All) keeps working unchanged
+  // and the new consumers (correction note UI, change log, export change-note column)
+  // just read the extra properties.
+  const REPORT_TO_SOURCE = 'Reference Excel';
+
+  const MATCH_METHOD_REASONS = {
+    exact_match: 'Exact match with the standardized name from the Reference Excel.',
+    case_insensitive_match: 'Matched with the Reference Excel name after ignoring capitalization differences.',
+    normalized_match: 'Matched after normalizing extra/missing spaces.',
+    punctuation_match: 'Matched after normalizing punctuation differences.',
+    token_match: 'Matched using token-based name matching (including initials).',
+    token_order_match: 'Matched using token-based name matching despite a difference in name order.',
+    fuzzy_match: 'Matched with the Reference Excel using AI-like fuzzy name matching.',
+    context_aware_match: 'Matched using the Reference Excel and row context (Role/Designation) to resolve multiple identically-named entries.'
+  };
+
+  function classifyReportToMatch(raw, matched, score, method, cfg) {
+    const trimmedRaw = String(raw).trim();
+    const reason = MATCH_METHOD_REASONS[method] || 'Matched with the Reference Excel name.';
+
+    if (score >= cfg.AUTO_FIX_MIN) {
+      const changed = matched !== trimmedRaw;
+      return {
+        original: raw,
+        corrected: matched,
+        suggested: changed ? matched : null,
+        confidence: score,
+        status: changed ? 'corrected' : 'valid',
+        reason: changed ? reason : 'Valid.',
+        matchingMethod: method,
+        source: REPORT_TO_SOURCE,
+        message: changed
+          ? `Report To standardized from "${raw}" to "${matched}" using the reference file (confidence ${score}%). ${reason}`
+          : 'Valid.',
+        resolution: null
+      };
+    }
+    if (score >= cfg.REVIEW_MIN) {
+      return {
+        original: raw,
+        corrected: raw,
+        suggested: matched,
+        confidence: score,
+        status: 'review',
+        reason,
+        matchingMethod: method,
+        source: REPORT_TO_SOURCE,
+        message: `Report To possible match "${matched}" found in the reference file (confidence ${score}%) - needs manual review. ${reason}`,
+        resolution: null
+      };
+    }
+    const possibleMin = cfg.REPORT_TO_POSSIBLE_MIN || 70;
+    if (score >= possibleMin) {
+      // Below the review threshold - never auto-suggest, just a non-blocking hint (spec #9/#30).
+      return {
+        original: raw,
+        corrected: raw,
+        suggested: null,
+        confidence: score,
+        status: 'valid',
+        warning: true,
+        reason,
+        matchingMethod: method,
+        source: REPORT_TO_SOURCE,
+        message: `Possible match "${matched}" found in the reference file (confidence ${score}%) - not confident enough to suggest automatically. ${reason}`,
+        resolution: null
+      };
+    }
+    return {
+      original: raw,
+      corrected: raw,
+      suggested: null,
+      confidence: score,
+      status: 'valid',
+      reason: null,
+      matchingMethod: null,
+      source: null,
+      message: 'No confident match found in the reference file - Report To value kept as-is.',
+      resolution: null
+    };
+  }
+
+  function correctReportToField(raw, context) {
+    const idx = window.getReferenceNameIndex();
+    const cfg = window.EXCEL_VALIDATOR_CONFIG;
+    const result = window.matchReportToAgainstReference(raw, context, idx, cfg);
+
+    if (!result || (!result.matched && !result.ambiguous)) {
+      return {
+        original: raw,
+        corrected: raw,
+        suggested: null,
+        confidence: result ? result.score : 0,
+        status: 'valid',
+        reason: null,
+        matchingMethod: null,
+        source: null,
+        message: 'No confident match found in the reference file - Report To value kept as-is.',
+        resolution: null
+      };
+    }
+    if (result.ambiguous) {
+      const names = (result.candidates || []).map(c => c.name).join(', ');
+      return {
+        original: raw,
+        corrected: raw,
+        suggested: null,
+        confidence: result.score,
+        status: 'valid',
+        warning: true,
+        reason: `Multiple equally likely matches found in the reference file (${names}) - not confident enough to pick one.`,
+        matchingMethod: null,
+        source: REPORT_TO_SOURCE,
+        message: `Multiple possible matches found in the reference file (${names}). Please review manually.`,
+        resolution: null
+      };
+    }
+    return classifyReportToMatch(raw, result.matched, result.score, result.method, cfg);
+  }
+
+  /* ---------------------------------------------------------------------
      Row-level orchestration
      --------------------------------------------------------------------- */
   const OPTIONAL_FIELDS = new Set(['fatherName', 'motherName', 'gender', 'email', 'nid', 'reportTo']);
@@ -462,6 +593,15 @@
           ? { original: mapped.nid, corrected: r.cleanValue, suggested: null, confidence: 100, status: 'valid', message: 'Valid.', resolution: null }
           : { original: mapped.nid, corrected: mapped.nid, suggested: null, confidence: 0, status: 'invalid', message: r.message, resolution: null };
       }
+    }
+
+    // Only touched when a Reference Excel has been uploaded and indexed (spec #26: no
+    // reference file uploaded -> skip entirely, no field/error created, Report To passes
+    // through completely untouched exactly like before this feature existed).
+    if ('reportTo' in mapped && window.hasReferenceNameIndex && window.hasReferenceNameIndex()) {
+      fields.reportTo = isBlank(mapped.reportTo)
+        ? { original: mapped.reportTo || '', corrected: '', suggested: null, confidence: 100, status: 'valid', reason: null, matchingMethod: null, source: null, message: '', resolution: null }
+        : correctReportToField(mapped.reportTo, { role: mapped.role, designation: mapped.designation });
     }
 
     if (['division', 'district', 'upazila', 'thana'].some(f => f in mapped)) {
@@ -510,6 +650,6 @@
     window.getEffectiveMessage = getEffectiveMessage;
     window.getEffectiveRowStatus = getEffectiveRowStatus;
     window.getEffectiveCorrectionCount = getEffectiveCorrectionCount;
-    window.excelValidatorInternals = { correctNameField, correctMobileField, correctDOBField, correctEnumField, matchLocationHierarchy, matchAgencyCampaignHierarchy, parseDOB };
+    window.excelValidatorInternals = { correctNameField, correctMobileField, correctDOBField, correctEnumField, matchLocationHierarchy, matchAgencyCampaignHierarchy, parseDOB, correctReportToField };
   }
 })();
