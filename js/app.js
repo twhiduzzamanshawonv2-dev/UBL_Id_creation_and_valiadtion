@@ -1183,11 +1183,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     const fileInput = document.getElementById(inputId);
     const previewContainer = document.getElementById(previewId);
     const errorElem = document.getElementById(errorId);
+    const dropzone = fileInput ? fileInput.closest('.upload-dropzone') : null;
+    const browseBtn = dropzone ? dropzone.querySelector('.btn-browse-files') : null;
 
-    if (!fileInput || !previewContainer) return;
+    if (!fileInput || !previewContainer || !dropzone) return;
 
-    fileInput.addEventListener('change', (e) => {
-      const file = e.target.files[0];
+    // Shared by both the normal file-picker <input> "change" event and clipboard paste below,
+    // so a pasted image goes through the exact same validation/preview/remove pipeline as an
+    // uploaded one and is stored in the same activeImageFiles/activeImageBase64 state the rest
+    // of the form (submit, reset) already reads from.
+    function applyImageFile(file, successMessage) {
       errorElem.textContent = '';
 
       if (!file) {
@@ -1231,8 +1236,102 @@ document.addEventListener('DOMContentLoaded', async () => {
           activeImageBase64[inputId] = null;
           previewContainer.innerHTML = '';
         });
+
+        if (successMessage) showToast(successMessage, 'success');
       };
       reader.readAsDataURL(file);
+    }
+
+    fileInput.addEventListener('change', (e) => {
+      applyImageFile(e.target.files[0], null);
+    });
+
+    // Extracts an image Blob out of a clipboard/drop DataTransfer's items/files list, used by
+    // both paste and drop below so they validate/preview through the exact same path.
+    function extractClipboardImageFile(clipboardData) {
+      const items = (clipboardData && clipboardData.items) || [];
+      let imageItem = null;
+      for (let i = 0; i < items.length; i++) {
+        if (items[i].type && items[i].type.indexOf('image/') === 0) {
+          imageItem = items[i];
+          break;
+        }
+      }
+      if (!imageItem) return null;
+      const blob = imageItem.getAsFile();
+      if (!blob) return null;
+
+      // Clipboard image Blobs often have no usable file name - synthesize one so the preview's
+      // file-name/size line and the eventual upload look identical to a normally chosen file.
+      const ext = (imageItem.type.split('/')[1] || 'png').replace('jpeg', 'jpg');
+      const file = new File([blob], `pasted-image-${Date.now()}.${ext}`, { type: imageItem.type });
+
+      // Keep the native <input> FileList in sync too, so anything that inspects fileInput.files
+      // directly sees the pasted image exactly like an uploaded one.
+      try {
+        const dt = new DataTransfer();
+        dt.items.add(file);
+        fileInput.files = dt.files;
+      } catch (err) {
+        // DataTransfer construction isn't supported in every browser - harmless to skip since
+        // activeImageFiles/activeImageBase64 (what submit/reset actually use) are set below regardless.
+      }
+      return file;
+    }
+
+    // Method 1 - "Browse files" is the ONLY thing that opens the native file picker. Clicking
+    // elsewhere in the box must not also open it (that's handled by the click listener below).
+    if (browseBtn) {
+      browseBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        fileInput.click();
+      });
+    }
+
+    // Method 2 - clicking anywhere else in the box just focuses the box itself (tabindex="0"
+    // in the markup), making it the active Ctrl+V/Cmd+V paste target without touching the file
+    // picker at all.
+    dropzone.addEventListener('click', (e) => {
+      if (browseBtn && browseBtn.contains(e.target)) return; // let the button's own handler run
+      dropzone.focus();
+    });
+
+    // Method 3 - drag & drop anywhere in the box.
+    ['dragenter', 'dragover'].forEach(evtName => {
+      dropzone.addEventListener(evtName, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dropzone.classList.add('drag-over');
+      });
+    });
+    ['dragleave', 'dragend'].forEach(evtName => {
+      dropzone.addEventListener(evtName, () => dropzone.classList.remove('drag-over'));
+    });
+    dropzone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dropzone.classList.remove('drag-over');
+      const dropped = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+      if (!dropped) return;
+      try {
+        const dt = new DataTransfer();
+        dt.items.add(dropped);
+        fileInput.files = dt.files;
+      } catch (err) { /* non-fatal - activeImageFiles/activeImageBase64 are set regardless */ }
+      applyImageFile(dropped, null);
+    });
+
+    // Copy & Paste support - the box (not the now-hidden <input>) holds focus once clicked
+    // (see the click listener above), so a "paste" listener here fires exactly when the user
+    // clicks the field and presses Ctrl+V/Cmd+V, independent of the file picker/button entirely.
+    dropzone.addEventListener('paste', (e) => {
+      const file = extractClipboardImageFile(e.clipboardData);
+      if (!file) {
+        errorElem.textContent = 'This clipboard content is not an image. Please copy an image and try again.';
+        return;
+      }
+      e.preventDefault();
+      applyImageFile(file, 'Image pasted successfully.');
     });
   }
 

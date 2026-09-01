@@ -271,13 +271,16 @@
             <!-- User Photo Upload -->
             <div class="field-group">
               <label for="userPhoto">User Photo <span class="req-star">*</span></label>
-              <div class="upload-dropzone">
-                <input type="file" id="userPhoto" class="file-input-hidden" accept="image/png, image/jpeg, image/jpg"
+              <div class="upload-dropzone" tabindex="0">
+                <input type="file" id="userPhoto" class="file-input-native" accept="image/png, image/jpeg, image/jpg"
                   aria-required="true" />
                 <div class="dropzone-content">
                   <span class="upload-icon">📷</span>
-                  <strong>Upload User Photo</strong>
+                  <p class="dropzone-text">Drag your photo here to start uploading.</p>
+                  <div class="dropzone-divider"><span>OR</span></div>
+                  <button type="button" class="btn-browse-files">Browse files</button>
                   <div class="field-hint">JPG, JPEG, PNG (Max 5MB)</div>
+                  <div class="field-hint paste-hint">Or click here and press Ctrl+V (Cmd+V on Mac) to paste a copied image</div>
                 </div>
               </div>
               <div id="userPhotoPreview" class="preview-container"></div>
@@ -457,13 +460,16 @@
             <!-- NID Front Side Image -->
             <div class="field-group">
               <label for="nidFront">NID Front Side Image <span class="req-star">*</span></label>
-              <div class="upload-dropzone">
-                <input type="file" id="nidFront" class="file-input-hidden" accept="image/png, image/jpeg, image/jpg"
+              <div class="upload-dropzone" tabindex="0">
+                <input type="file" id="nidFront" class="file-input-native" accept="image/png, image/jpeg, image/jpg"
                   aria-required="true" />
                 <div class="dropzone-content">
                   <span class="upload-icon">🆔</span>
-                  <strong>Upload NID Front Side</strong>
+                  <p class="dropzone-text">Drag your NID front side photo here to start uploading.</p>
+                  <div class="dropzone-divider"><span>OR</span></div>
+                  <button type="button" class="btn-browse-files">Browse files</button>
                   <div class="field-hint">JPG, JPEG, PNG (Max 5MB)</div>
+                  <div class="field-hint paste-hint">Or click here and press Ctrl+V (Cmd+V on Mac) to paste a copied image</div>
                 </div>
               </div>
               <div id="nidFrontPreview" class="preview-container"></div>
@@ -473,13 +479,16 @@
             <!-- NID Back Side Image -->
             <div class="field-group">
               <label for="nidBack">NID Back Side Image <span class="req-star">*</span></label>
-              <div class="upload-dropzone">
-                <input type="file" id="nidBack" class="file-input-hidden" accept="image/png, image/jpeg, image/jpg"
+              <div class="upload-dropzone" tabindex="0">
+                <input type="file" id="nidBack" class="file-input-native" accept="image/png, image/jpeg, image/jpg"
                   aria-required="true" />
                 <div class="dropzone-content">
                   <span class="upload-icon">📄</span>
-                  <strong>Upload NID Back Side</strong>
+                  <p class="dropzone-text">Drag your NID back side photo here to start uploading.</p>
+                  <div class="dropzone-divider"><span>OR</span></div>
+                  <button type="button" class="btn-browse-files">Browse files</button>
                   <div class="field-hint">JPG, JPEG, PNG (Max 5MB)</div>
+                  <div class="field-hint paste-hint">Or click here and press Ctrl+V (Cmd+V on Mac) to paste a copied image</div>
                 </div>
               </div>
               <div id="nidBackPreview" class="preview-container"></div>

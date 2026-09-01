@@ -775,35 +775,154 @@ label {
   75% { transform: translateX(5px); }
 }
 
-/* Image Upload Area & Preview */
+/* Image Upload Area & Preview
+   Three input methods, each scoped to its own trigger so they never fight each other:
+   - "Browse files" button -> opens the native file picker (the ONLY thing that does).
+   - Drag & drop anywhere in the box -> handled via dragover/drop listeners in app.js.
+   - Click anywhere else in the box (or Tab to it) -> focuses the box itself (tabindex="0"
+     below) so it becomes the active Ctrl+V/Cmd+V paste target, without touching the file
+     picker at all. */
 .upload-dropzone {
   border: 2px dashed var(--border-color);
-  border-radius: var(--radius-md);
-  padding: 1.5rem;
+  border-radius: var(--radius-lg);
+  padding: 1.75rem 1.25rem;
   text-align: center;
-  background: var(--bg-main);
+  background: linear-gradient(180deg, var(--bg-card) 0%, var(--bg-main) 100%);
   cursor: pointer;
   transition: var(--transition);
   position: relative;
+  box-shadow: var(--shadow-sm);
 }
 
 .upload-dropzone:hover {
   border-color: var(--primary);
   background: var(--primary-light);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
 }
 
-.file-input-hidden {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  opacity: 0;
-  cursor: pointer;
+/* Active paste target - the box itself holds focus once clicked (see tabindex="0" in the
+   markup), so this doubles as the "ready to receive Ctrl+V" indicator with no extra JS state. */
+.upload-dropzone:focus,
+.upload-dropzone:focus-within {
+  border-color: var(--primary);
+  background: var(--primary-light);
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+  box-shadow: var(--shadow-md);
+}
+
+/* Dragging a file over the box - toggled in app.js on dragenter/dragover/dragleave/drop. */
+.upload-dropzone.drag-over {
+  border-color: var(--primary);
+  border-style: solid;
+  background: var(--primary-light);
+  box-shadow: var(--shadow-lg);
+  transform: scale(1.015);
+}
+
+.upload-dropzone.drag-over .upload-icon {
+  transform: scale(1.12) rotate(-4deg);
+}
+
+.paste-hint {
+  opacity: 0.7;
+  font-size: 0.7rem;
+  letter-spacing: 0.01em;
+}
+
+/* The real <input type="file">: completely invisible and out of the click path - only
+   fileInput.click() (from the Browse files button in app.js) ever opens it. */
+.file-input-native {
+  display: none;
 }
 
 .dropzone-content {
   pointer-events: none;
+}
+
+/* Higher specificity than the bare rule above (which the Excel-import dropzones still rely on
+   for their click-passes-through-to-the-overlay-input trick) - our redesigned image dropzones
+   have a real, visible "Browse files" button and clickable text, so their content needs normal
+   pointer events plus the stacked icon/text/divider/button layout. */
+.upload-dropzone .dropzone-content {
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.upload-dropzone .upload-icon {
+  width: 52px;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.6rem;
+  margin-bottom: 0.15rem;
+  border-radius: 50%;
+  background: var(--primary-light);
+  box-shadow: inset 0 0 0 1px rgba(79, 70, 229, 0.12);
+  transition: transform 0.2s ease;
+}
+
+.upload-dropzone:hover .upload-icon {
+  transform: translateY(-2px);
+}
+
+.dropzone-text {
+  margin: 0;
+  color: var(--text-main);
+  font-weight: 600;
+  font-size: 0.9rem;
+  line-height: 1.35;
+}
+
+.dropzone-divider {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  max-width: 200px;
+  color: var(--text-light);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  margin: 0.15rem 0;
+}
+
+.dropzone-divider::before,
+.dropzone-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border-color);
+}
+
+.btn-browse-files {
+  background: linear-gradient(180deg, var(--primary) 0%, var(--primary-hover) 100%);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-md);
+  padding: 0.55rem 1.5rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: var(--transition);
+  box-shadow: 0 2px 8px -2px rgba(79, 70, 229, 0.5);
+}
+
+.btn-browse-files:hover {
+  background: linear-gradient(180deg, var(--primary-hover) 0%, var(--primary-hover) 100%);
+  box-shadow: 0 4px 12px -2px rgba(79, 70, 229, 0.55);
+  transform: translateY(-1px);
+}
+
+.btn-browse-files:active {
+  transform: translateY(0);
+  box-shadow: 0 1px 4px -1px rgba(79, 70, 229, 0.5);
 }
 
 .upload-icon {
@@ -825,14 +944,21 @@ label {
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-sm);
+  transition: var(--transition);
+}
+
+.image-preview-card:hover {
+  box-shadow: var(--shadow-md);
+  border-color: var(--border-focus);
 }
 
 .image-preview-card img {
-  width: 60px;
-  height: 60px;
+  width: 68px;
+  height: 68px;
   object-fit: cover;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   border: 1px solid var(--border-color);
+  box-shadow: var(--shadow-sm);
 }
 
 .preview-info {
