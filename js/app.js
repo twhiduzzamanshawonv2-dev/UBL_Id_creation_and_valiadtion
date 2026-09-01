@@ -106,9 +106,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   // executes before the JS engine's top-to-bottom pass would otherwise reach a `const`
   // placed later in this file - a plain `const` declared inside Section 0 was in its TDZ
   // at that point and threw "Cannot access before initialization".
-  const SUPER_ADMIN_ONLY_NAV_IDS = ['navAgencies', 'navCampaigns', 'navCampaignLogins'];
+  const SUPER_ADMIN_ONLY_NAV_IDS = ['navAgencies', 'navCampaigns', 'navCampaignLogins', 'navUserImport', 'navImportHistory', 'navExport', 'navExcelValidator'];
   const SUPER_ADMIN_ONLY_ELEMENT_IDS = [
     'usersAgencyCampaignFilterGroup',
+    'usersAdvancedFilterGroup',
+    'btnExportExcel',
     'dashboardFilterBar',
     'exportAgencyCampaignFilterGroup',
     'exportCampaignDataCard'
@@ -117,8 +119,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Same TDZ reason - switchTab() is called (as `switchTab('dashboard')`) at the bottom
   // of the top-level setup below, before a `const` positioned inside switchTab()'s own
   // section further down the file would otherwise have executed.
-  const ADMIN_ONLY_VIEWS = ['dashboard', 'create-user', 'admin-management', 'agencies', 'campaigns', 'campaign-logins', 'export', 'excel-validator'];
-  const SUPER_ADMIN_ONLY_VIEWS = ['agencies', 'campaigns', 'campaign-logins'];
+  const ADMIN_ONLY_VIEWS = ['dashboard', 'create-user', 'admin-management', 'agencies', 'campaigns', 'campaign-logins', 'export', 'excel-validator', 'user-import', 'import-history'];
+  // 'user-import' (Import Users from Excel) and 'import-history' are Super-Admin-only:
+  // the feature creates users under an ARBITRARY Agency+Campaign the caller picks,
+  // which only a Super Admin is allowed to do (see register_user()/import_users_batch()
+  // in supabase/schema.sql - the real, server-side enforcement of this restriction).
+  // 'export' and 'excel-validator' (Validation) are also Super-Admin-only now, per request.
+  const SUPER_ADMIN_ONLY_VIEWS = ['agencies', 'campaigns', 'campaign-logins', 'user-import', 'import-history', 'export', 'excel-validator'];
 
   // Resolves any existing Supabase Auth session (and, if one exists, the account's
   // role/Agency/Campaign scope + the Agencies/Campaigns master lists - see
@@ -141,6 +148,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   initExportView();
   initModals();
   initConfirmModal();
+  initImageLightbox();
 
   // Dashboard is the default landing tab now that every view requires login (see
   // ADMIN_ONLY_VIEWS in switchTab()) - a visitor with no session is transparently
@@ -456,6 +464,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     } else if (viewId === 'export') {
       populateExportFilters();
       refreshExportUserCount();
+    } else if (viewId === 'import-history') {
+      renderImportHistoryList();
+    } else if (viewId === 'user-import') {
+      if (window.refreshUserImportDestination) window.refreshUserImportDestination();
     }
   }
 
@@ -1718,7 +1730,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       btnResetFilters.addEventListener('click', () => {
         searchInput.value = '';
         ['filterAgency', 'filterCampaign', 'filterDivision', 'filterDistrict', 'filterUpazila', 'filterThana',
-         'filterDesignation', 'filterRole', 'filterStatus',
+         'filterThanaSearch', 'filterDesignation', 'filterRole', 'filterStatus',
          'filterFromDate', 'filterToDate'].forEach(id => {
           const select = document.getElementById(id);
           if (select) select.value = '';
@@ -1730,6 +1742,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     initLocationFilterCascade();
+    initThanaFilterSearchableSelect();
     initAdminAgencyCampaignFilterCascade();
 
     ['filterDesignation', 'filterRole', 'filterStatus', 'filterFromDate', 'filterToDate'].forEach(id => {
@@ -1777,8 +1790,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     const divSelect = document.getElementById('filterDivision');
     const distSelect = document.getElementById('filterDistrict');
     const upzSelect = document.getElementById('filterUpazila');
-    const thanaSelect = document.getElementById('filterThana');
-    if (!divSelect || !distSelect || !upzSelect || !thanaSelect) return;
+    const thanaHidden = document.getElementById('filterThana');
+    if (!divSelect || !distSelect || !upzSelect || !thanaHidden) return;
 
     function fillSelect(select, options, placeholder) {
       const cur = select.value;
@@ -1791,34 +1804,41 @@ document.addEventListener('DOMContentLoaded', async () => {
       const distMap = BD_LOCATIONS[divSelect.value] || {};
       fillSelect(distSelect, Object.keys(distMap).sort(), 'All Districts');
       fillSelect(upzSelect, [], 'All Upazilas');
-      fillSelect(thanaSelect, [], 'All Thanas');
+      renderThanaFilterOptions([]);
       reloadUserTable(1);
     });
 
     distSelect.addEventListener('change', () => {
       const upzMap = (BD_LOCATIONS[divSelect.value] || {})[distSelect.value] || {};
       fillSelect(upzSelect, Object.keys(upzMap).sort(), 'All Upazilas');
-      fillSelect(thanaSelect, [], 'All Thanas');
+      renderThanaFilterOptions([]);
       reloadUserTable(1);
     });
 
     upzSelect.addEventListener('change', () => {
       const thanas = ((BD_LOCATIONS[divSelect.value] || {})[distSelect.value] || {})[upzSelect.value] || [];
-      fillSelect(thanaSelect, thanas.slice().sort(), 'All Thanas');
+      renderThanaFilterOptions(thanas.slice().sort());
       reloadUserTable(1);
     });
-
-    thanaSelect.addEventListener('change', () => reloadUserTable(1));
   }
 
-  // Resets the District/Upazila/Thana filter dropdowns back to their "All ..." empty
-  // state (used by "Clear Filters") without needing initLocationFilterCascade's
-  // change-event machinery.
+  // Resets the District/Upazila filter dropdowns AND the Thana searchable select
+  // back to their "All ..." empty state (used by "Clear Filters") without needing
+  // initLocationFilterCascade's change-event machinery. Thana goes back to the full
+  // country-wide list (not empty) since it's usable standalone, independent of
+  // Division/District/Upazila (see populateAdminFilters()).
   function populateLocationFilterCascade() {
-    ['filterDistrict', 'filterUpazila', 'filterThana'].forEach(id => {
+    ['filterDistrict', 'filterUpazila'].forEach(id => {
       const select = document.getElementById(id);
       if (select) select.innerHTML = `<option value="">All ${id.replace('filter', '')}s</option>`;
     });
+    const allThanas = new Set();
+    Object.values(BD_LOCATIONS).forEach(districts =>
+      Object.values(districts).forEach(upazilas =>
+        Object.values(upazilas).forEach(thanas => thanas.forEach(t => allThanas.add(t)))
+      )
+    );
+    renderThanaFilterOptions([...allThanas].sort());
   }
 
   // Agency -> Campaign filter cascade for the Users table (same shape as the
@@ -1899,6 +1919,100 @@ document.addEventListener('DOMContentLoaded', async () => {
       Object.keys(BD_LOCATIONS).sort().forEach(d => divSelect.innerHTML += `<option value="${d}">${d}</option>`);
       divSelect.value = cur;
     }
+
+    // Thana filter (searchable select) - defaults to every Thana in the country
+    // (flattened out of BD_LOCATIONS, deduped, sorted), NOT just whatever the
+    // Division/District/Upazila cascade has narrowed it to. Thana is the one location
+    // filter available to every role (see SUPER_ADMIN_ONLY_ELEMENT_IDS) - an Agency
+    // Admin has no Division/District/Upazila dropdowns to drive that cascade at all
+    // (they're Super-Admin-only), so without this the Thana list would sit permanently
+    // empty for that role. initLocationFilterCascade()'s change handlers still narrow
+    // this list further for whoever DOES use Division/District/Upazila (Super Admin).
+    if (!document.getElementById('filterUpazila')?.value) {
+      const allThanas = new Set();
+      Object.values(BD_LOCATIONS).forEach(districts =>
+        Object.values(districts).forEach(upazilas =>
+          Object.values(upazilas).forEach(thanas => thanas.forEach(t => allThanas.add(t)))
+        )
+      );
+      renderThanaFilterOptions([...allThanas].sort());
+    }
+  }
+
+  // Rebuilds the Thana filter's type-ahead dropdown list from `options` (either the
+  // full country-wide list or whatever the Division/District/Upazila cascade has
+  // narrowed it to) - same searchable-select widget shape as Report To on the
+  // registration form (see initReportToSearchableSelect()), just backing a filter
+  // instead of a required form field. Keeps the current selection/typed text intact
+  // if it's still a valid option, clears it otherwise (matches the old <select>'s
+  // "value survives a repopulate only if still present" behavior).
+  function renderThanaFilterOptions(options) {
+    const dropdown = document.getElementById('filterThanaDropdown');
+    const searchInput = document.getElementById('filterThanaSearch');
+    const hidden = document.getElementById('filterThana');
+    if (!dropdown || !searchInput || !hidden) return;
+
+    const stillValid = hidden.value && options.includes(hidden.value);
+    if (!stillValid) {
+      hidden.value = '';
+      searchInput.value = '';
+    }
+
+    dropdown.innerHTML = '';
+    if (options.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'searchable-item';
+      empty.style.cursor = 'default';
+      empty.style.color = 'var(--text-muted)';
+      empty.textContent = 'Select an Upazila first.';
+      dropdown.appendChild(empty);
+      return;
+    }
+    options.forEach(name => {
+      const item = document.createElement('div');
+      item.className = 'searchable-item';
+      item.textContent = name;
+      item.addEventListener('click', () => {
+        hidden.value = name;
+        searchInput.value = name;
+        dropdown.classList.remove('show');
+        reloadUserTable(1);
+      });
+      dropdown.appendChild(item);
+    });
+  }
+
+  // Wires the Thana filter's type-ahead behavior - typing filters the already-rendered
+  // option list (rebuilt by renderThanaFilterOptions() whenever the available Thanas
+  // change), same interaction pattern as initReportToSearchableSelect(). Clearing the
+  // box entirely also clears the applied filter (equivalent to the old <select>'s
+  // "All Thanas" option) and re-queries immediately.
+  function initThanaFilterSearchableSelect() {
+    const searchInput = document.getElementById('filterThanaSearch');
+    const dropdown = document.getElementById('filterThanaDropdown');
+    const hidden = document.getElementById('filterThana');
+    if (!searchInput || !dropdown || !hidden) return;
+
+    searchInput.addEventListener('focus', () => dropdown.classList.add('show'));
+
+    searchInput.addEventListener('input', () => {
+      const query = searchInput.value.trim().toLowerCase();
+      dropdown.querySelectorAll('.searchable-item').forEach(item => {
+        item.style.display = item.textContent.toLowerCase().includes(query) ? 'block' : 'none';
+      });
+      dropdown.classList.add('show');
+
+      if (!query && hidden.value) {
+        hidden.value = '';
+        reloadUserTable(1);
+      }
+    });
+
+    document.addEventListener('click', e => {
+      if (!e.target.closest('#filterThanaSearch') && !e.target.closest('#filterThanaDropdown')) {
+        dropdown.classList.remove('show');
+      }
+    });
   }
 
   // Renders whatever page of results is currently cached in storage.users (already
@@ -2574,6 +2688,92 @@ document.addEventListener('DOMContentLoaded', async () => {
      ========================================================================== */
   let editingCampaignLoginId = null;
 
+  // Import History (Super Admin only - view gated in switchTab()/updateNavVisibility(),
+  // data gated for real by the import_batches/import_batch_rows RLS policies
+  // regardless of what this renders). One summary row per import_users_batch()
+  // call (see js/db-service.js getImportBatches()); the per-row breakdown
+  // (getImportBatchRows()) is fetched lazily, only when a batch's "Details" is
+  // expanded, so opening the page never pulls every row of every past import.
+  function importHistoryEscapeHtml(str) {
+    return String(str ?? '').replace(/[&<>"']/g, ch => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[ch]));
+  }
+
+  function renderImportBatchRowsTable(rows) {
+    if (!rows.length) return '<p class="text-muted" style="margin:0.5rem 0;">No row details recorded for this batch.</p>';
+    const body = rows.map(r => `
+      <tr>
+        <td>${r.row_index + 1}</td>
+        <td>${importHistoryEscapeHtml(r.row_name)}</td>
+        <td>${r.success ? '<span class="badge badge-active">Imported</span>' : '<span class="badge badge-inactive">Failed</span>'}</td>
+        <td>${importHistoryEscapeHtml(r.success ? r.user_code : r.error_message)}</td>
+      </tr>
+    `).join('');
+    return `
+      <div class="table-responsive">
+        <table class="data-table">
+          <thead><tr><th>#</th><th>Name</th><th>Result</th><th>User Code / Error</th></tr></thead>
+          <tbody>${body}</tbody>
+        </table>
+      </div>`;
+  }
+
+  function renderImportHistoryList() {
+    const tbody = document.getElementById('importHistoryTableBody');
+    if (!tbody) return;
+    tbody.innerHTML = `<tr><td colspan="9" class="text-center py-4 text-muted">Loading...</td></tr>`;
+
+    dbService.getImportBatches().then(batches => {
+      if (batches.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="9" class="text-center py-4 text-muted">No imports yet.</td></tr>`;
+        return;
+      }
+      tbody.innerHTML = batches.map(b => `
+        <tr>
+          <td>${importHistoryEscapeHtml(b.file_name) || '—'}</td>
+          <td>${b.agencies ? importHistoryEscapeHtml(b.agencies.name) : '—'}</td>
+          <td>${b.campaigns ? importHistoryEscapeHtml(b.campaigns.name) : '—'}</td>
+          <td>${importHistoryEscapeHtml(b.uploaded_by) || '—'}</td>
+          <td>${new Date(b.created_date).toLocaleString()}</td>
+          <td>${b.total_rows}</td>
+          <td>${b.imported_rows}</td>
+          <td>${b.failed_rows}</td>
+          <td><button type="button" class="btn-action btn-import-history-details" data-batch-id="${b.id}">🔍 Details</button></td>
+        </tr>
+        <tr class="import-history-detail-row" data-batch-id="${b.id}" style="display:none;">
+          <td colspan="9"><div class="import-history-detail-body">Loading...</div></td>
+        </tr>
+      `).join('');
+
+      tbody.querySelectorAll('.btn-import-history-details').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const batchId = btn.getAttribute('data-batch-id');
+          const detailRow = tbody.querySelector(`.import-history-detail-row[data-batch-id="${CSS.escape(batchId)}"]`);
+          if (!detailRow) return;
+          const showing = detailRow.style.display !== 'none';
+          if (showing) {
+            detailRow.style.display = 'none';
+            btn.textContent = '🔍 Details';
+            return;
+          }
+          detailRow.style.display = '';
+          btn.textContent = '🔼 Hide';
+          const body = detailRow.querySelector('.import-history-detail-body');
+          if (body.dataset.loaded === 'true') return;
+          dbService.getImportBatchRows(batchId).then(rows => {
+            body.innerHTML = renderImportBatchRowsTable(rows);
+            body.dataset.loaded = 'true';
+          }).catch(err => {
+            body.innerHTML = `<p class="text-muted" style="margin:0.5rem 0;">${importHistoryEscapeHtml(err.message || 'Failed to load details.')}</p>`;
+          });
+        });
+      });
+    }).catch(err => {
+      tbody.innerHTML = `<tr><td colspan="9" class="text-center py-4 text-muted">${err.message || 'Failed to load Import History.'}</td></tr>`;
+    });
+  }
+
   function renderCampaignLoginsList() {
     const tbody = document.getElementById('campaignLoginsTableBody');
     if (!tbody) return;
@@ -3154,6 +3354,72 @@ document.addEventListener('DOMContentLoaded', async () => {
         btnConfirm.classList.remove('is-loading');
       });
     }
+  }
+
+  /* ==========================================================================
+     11b. Image Lightbox - zoomable full-size viewer for every photo/document
+     thumbnail in the app (Users table avatar, User Profile Details avatar,
+     NID Front/Back - both in that Details view and in the pre-submission
+     Preview modal). One shared modal, opened via event delegation so newly
+     rendered thumbnails (table re-renders, modal re-opens) are covered
+     automatically without re-binding anything per-image.
+     ========================================================================== */
+  function initImageLightbox() {
+    const modal = document.getElementById('imageLightboxModal');
+    const img = document.getElementById('imageLightboxImg');
+    const viewport = document.getElementById('imageLightboxViewport');
+    const btnZoomIn = document.getElementById('btnLightboxZoomIn');
+    const btnZoomOut = document.getElementById('btnLightboxZoomOut');
+    const btnZoomReset = document.getElementById('btnLightboxZoomReset');
+    const btnClose = document.getElementById('btnCloseLightbox');
+    if (!modal || !img) return;
+
+    const ZOOM_MIN = 50, ZOOM_MAX = 300, ZOOM_STEP = 25, ZOOM_DEFAULT = 100;
+    let zoom = ZOOM_DEFAULT;
+
+    function applyZoom() {
+      img.style.width = zoom + '%';
+      btnZoomReset.textContent = zoom + '%';
+      if (btnZoomOut) btnZoomOut.disabled = zoom <= ZOOM_MIN;
+      if (btnZoomIn) btnZoomIn.disabled = zoom >= ZOOM_MAX;
+    }
+
+    function openLightbox(src, alt) {
+      if (!src) return; // nothing to show for a missing/broken image - don't open an empty viewer
+      zoom = ZOOM_DEFAULT;
+      img.src = src;
+      img.alt = alt || 'Preview';
+      applyZoom();
+      viewport.scrollTop = 0;
+      viewport.scrollLeft = 0;
+      modal.classList.add('open');
+    }
+
+    function closeLightbox() {
+      modal.classList.remove('open');
+      img.src = ''; // release the (possibly large) image from memory immediately
+    }
+
+    // Delegated click - covers every current AND future .user-avatar /
+    // .user-detail-avatar / NID preview thumbnail without per-image binding.
+    // Ignores a click on an image with no real src (never opens a blank viewer).
+    document.addEventListener('click', e => {
+      const target = e.target.closest('.user-avatar, .user-detail-avatar, .preview-img-box img');
+      // getAttribute (not the .src DOM property) - an empty src="" attribute resolves
+      // through the .src property to the CURRENT PAGE's own URL (a browser quirk), which
+      // would otherwise pass this falsy check and open the lightbox on a broken image.
+      if (!target || !target.getAttribute('src')) return;
+      openLightbox(target.src, target.alt);
+    });
+
+    if (btnZoomIn) btnZoomIn.addEventListener('click', () => { zoom = Math.min(ZOOM_MAX, zoom + ZOOM_STEP); applyZoom(); });
+    if (btnZoomOut) btnZoomOut.addEventListener('click', () => { zoom = Math.max(ZOOM_MIN, zoom - ZOOM_STEP); applyZoom(); });
+    if (btnZoomReset) btnZoomReset.addEventListener('click', () => { zoom = ZOOM_DEFAULT; applyZoom(); });
+    if (btnClose) btnClose.addEventListener('click', closeLightbox);
+
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape' && modal.classList.contains('open')) closeLightbox();
+    });
   }
 
   /* ==========================================================================

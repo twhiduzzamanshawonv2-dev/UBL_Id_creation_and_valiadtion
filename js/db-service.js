@@ -180,7 +180,13 @@ const dbService = {
 
     let query = sb.from(USERS_VIEW).select('*', { count: 'exact' });
     query = applyFilters(query, opts);
-    query = query.order('created_date', { ascending: false }).range(from, to);
+    // `id` as a tie-breaker: created_date alone is NOT unique - every row inserted by
+    // one import_users_batch() call (Excel import) shares the exact same created_date
+    // (Postgres now() is fixed for the whole transaction, not per-statement), and
+    // Postgres gives no stable order for ties across separate paginated queries. Without
+    // this, a tied row could appear on two different pages (duplicate) or on neither
+    // (silently skipped) - exactly the "user missing" / "user shown twice" bug reports.
+    query = query.order('created_date', { ascending: false }).order('id', { ascending: false }).range(from, to);
 
     const { data, error, count } = await run(query, 'Failed to load users.');
     const rows = await Promise.all((data || []).map(dbRowToUser).map(resolveUserPhoto));
@@ -213,7 +219,10 @@ const dbService = {
     while (true) {
       let query = sb.from(USERS_VIEW).select('*');
       query = applyFilters(query, opts);
-      query = query.order('created_date', { ascending: false }).range(from, from + batchSize - 1);
+      // Same tie-breaker as getUsers() above - without it, a batch of rows sharing an
+      // identical created_date (e.g. one Excel import) could be duplicated or dropped
+      // across these paginated batches.
+      query = query.order('created_date', { ascending: false }).order('id', { ascending: false }).range(from, from + batchSize - 1);
       const { data, error } = await run(query, 'Failed to load users for export.');
       rows.push(...data.map(dbRowToUser));
       if (data.length < batchSize) break;
@@ -222,13 +231,20 @@ const dbService = {
     return rows;
   },
 
+  // Deliberately does NOT resolve userPhoto to a signed URL here - its only
+  // caller (storage.getUserDetailWithImages()) always immediately pipes the
+  // result into getSignedDocUrls(), which is the single place that resolves
+  // ALL three private-storage fields (photo + both NID sides) together. Doing
+  // it here too used to double-resolve: this returned an already-signed URL,
+  // then getSignedDocUrls() signed THAT URL string again as if it were a raw
+  // object path, producing a nonsensical nested URL that 404'd in the browser.
   async getUserByCode(userCode) {
     const sb = requireClient();
     const { data, error } = await run(
       sb.from(USERS_VIEW).select('*').eq('user_code', userCode).maybeSingle(),
       'Failed to load user.'
     );
-    return resolveUserPhoto(dbRowToUser(data));
+    return dbRowToUser(data);
   },
 
   /**
@@ -312,11 +328,20 @@ const dbService = {
     return path;
   },
 
-  /** Resolves a user's private NID document paths (and photo) to short-lived signed URLs (detail view only - requires an authenticated session). */
+  /**
+   * Resolves a user's private NID document paths (and photo) to short-lived
+   * signed URLs (detail view only - requires an authenticated session).
+   * `user.userPhoto` may already be a signed URL here (e.g. when called on a
+   * row taken from the already-resolved admin-table cache - see
+   * storage.getUserDetailWithImages()) - re-signing an already-signed URL
+   * string as if it were a raw object path produces a nonsensical nested URL
+   * that 404s, so any already-resolved http(s) value is passed through as-is.
+   */
   async getSignedDocUrls(user) {
     const sb = requireClient();
     const resolve = async (bucket, path) => {
       if (!path) return '';
+      if (/^https?:\/\//i.test(path)) return path;
       const { data, error } = await sb.storage
         .from(bucket)
         .createSignedUrl(path, NID_SIGNED_URL_TTL_SECONDS);
@@ -489,6 +514,60 @@ const dbService = {
     return data || [];
   },
 
+  /**
+   * Super-Admin-only Excel -> User Registration Import. `rows` is an array of
+   * objects shaped exactly like createUser()'s userData (camelCase), minus
+   * agencyId/campaignId (fixed for the whole batch) and image fields (Excel
+   * rows never have files). `counts` is the frontend's own validation-summary
+   * tally ({ total, valid, invalid, corrected }) recorded verbatim into the
+   * import_batches audit row alongside the server-computed imported/failed
+   * counts. All real authorization happens server-side inside
+   * import_users_batch() (SECURITY DEFINER, rejects non-Super-Admin callers) -
+   * this is just the RPC wrapper, exactly like createUser()/register_user().
+   */
+  async importUsersBatch(agencyId, campaignId, fileName, rows, counts = {}) {
+    const sb = requireClient();
+    const { data } = await run(
+      sb.rpc('import_users_batch', {
+        p_agency_id: agencyId,
+        p_campaign_id: campaignId,
+        p_file_name: fileName,
+        p_rows: rows,
+        p_total_rows: counts.total ?? null,
+        p_valid_rows: counts.valid ?? null,
+        p_invalid_rows: counts.invalid ?? null,
+        p_corrected_rows: counts.corrected ?? null
+      }),
+      'Failed to import users.'
+    );
+    return data;
+  },
+
+  /** Import History (Super Admin only - RLS enforces this regardless of caller). */
+  async getImportBatches() {
+    const sb = requireClient();
+    const { data } = await run(
+      sb.from('import_batches')
+        .select('*, agencies(name), campaigns(name)')
+        .order('created_date', { ascending: false }),
+      'Failed to load Import History.'
+    );
+    return data || [];
+  },
+
+  /** Per-row detail (success/user_code or error) for one import batch - fetched on demand when the Import History row is expanded. */
+  async getImportBatchRows(batchId) {
+    const sb = requireClient();
+    const { data } = await run(
+      sb.from('import_batch_rows')
+        .select('*')
+        .eq('batch_id', batchId)
+        .order('row_index', { ascending: true }),
+      'Failed to load import batch details.'
+    );
+    return data || [];
+  },
+
   async createAgency(name) {
     const sb = requireClient();
     const identity = await getCurrentAdminIdentity();
@@ -603,7 +682,7 @@ const dbService = {
     const sb = requireClient();
     let query = sb.from(USERS_VIEW).select('*');
     query = applyFilters(query, opts);
-    query = query.order('created_date', { ascending: false }).limit(limit);
+    query = query.order('created_date', { ascending: false }).order('id', { ascending: false }).limit(limit);
     const { data } = await run(query, 'Failed to load Recent Users.');
     return (data || []).map(dbRowToUser);
   },

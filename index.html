@@ -108,6 +108,12 @@
       <button type="button" class="nav-tab" data-view="excel-validator" id="navExcelValidator">
         ✅ Validation
       </button>
+      <button type="button" class="nav-tab" data-view="user-import" id="navUserImport">
+        📤 Import Users
+      </button>
+      <button type="button" class="nav-tab" data-view="import-history" id="navImportHistory">
+        🗂️ Import History
+      </button>
     </nav>
 
     <!-- Auth Status - every view requires sign-in now. Shows who's logged in and,
@@ -545,8 +551,8 @@
          ========================================================================= -->
     <section id="view-admin-management" class="view-section">
       <div class="page-title-box">
-        <h2>Admin / User Management Directory</h2>
-        <p>Search, filter, view details, activate/deactivate accounts, and export user records to Excel.</p>
+        <h2>User Management Directory</h2>
+        <p>Search, filter, view details, activate/deactivate accounts.</p>
       </div>
 
       <div class="dashboard-card">
@@ -558,24 +564,52 @@
             <span id="userCountBadge" class="badge badge-role">0 Users</span>
           </div>
 
+          <!-- Every field-group below carries an explicit `order` matching the SUPER ADMIN
+               sequence (Search, Agency, Campaign, Division, District, Upazila, Thana,
+               Designation, Role, Status, From Date, To Date). Thana/Role are physically
+               placed here (right after Search) only so they're easy to find in this file -
+               CSS grid `order` is what actually decides on-screen position, which is why an
+               Agency Admin (who only ever sees Search/Thana/Role - everything else in this
+               bar is Super-Admin-only) still sees them fall in a sensible 1-2-3 order
+               without any separate per-role markup or JS. -->
+
           <!-- Global Search Input -->
-          <div class="field-group">
+          <div class="field-group" style="order: 1;">
             <label for="adminSearchInput">Search Keywords</label>
             <input type="text" id="adminSearchInput" class="form-control" placeholder="Name, Mobile, User ID, NID..." />
+          </div>
+
+          <!-- Thana Filter (type-ahead searchable select, same widget pattern as the
+               registration form's Report To field) - available to every role (unlike the
+               rest of the location/designation/status/date filters below, which are
+               Super-Admin-only). -->
+          <div class="field-group searchable-select-container" style="order: 7;">
+            <label for="filterThanaSearch">Thana</label>
+            <input type="text" id="filterThanaSearch" class="form-control" placeholder="All Thanas" autocomplete="off" />
+            <input type="hidden" id="filterThana" />
+            <div id="filterThanaDropdown" class="searchable-dropdown"></div>
+          </div>
+
+          <!-- Role Filter - available to every role (see Thana above). -->
+          <div class="field-group" style="order: 9;">
+            <label for="filterRole">Role</label>
+            <select id="filterRole" class="form-control">
+              <option value="">All Roles</option>
+            </select>
           </div>
 
           <!-- Agency/Campaign Filters - hidden entirely for an agency_admin account (it
                only ever has one Agency+Campaign, so a filter for it is redundant); shown
                for Super Admin. Wrapped so js/app.js can toggle both in one call. -->
           <div id="usersAgencyCampaignFilterGroup" class="agency-campaign-filter-group">
-            <div class="field-group">
+            <div class="field-group" style="order: 2;">
               <label for="filterAgency">Agency</label>
               <select id="filterAgency" class="form-control">
                 <option value="">All Agencies</option>
               </select>
             </div>
 
-            <div class="field-group">
+            <div class="field-group" style="order: 3;">
               <label for="filterCampaign">Campaign</label>
               <select id="filterCampaign" class="form-control">
                 <option value="">All Campaigns</option>
@@ -583,85 +617,78 @@
             </div>
           </div>
 
-          <!-- Division Filter -->
-          <div class="field-group">
-            <label for="filterDivision">Division</label>
-            <select id="filterDivision" class="form-control">
-              <option value="">All Divisions</option>
-            </select>
-          </div>
+          <!-- Division/District/Upazila/Designation/Status/Date filters and the Export
+               button - Super-Admin-only (an agency_admin account only ever manages its own
+               single Agency+Campaign, so this granular slicing plus a bulk export isn't
+               offered there; Search Keywords/Thana/Role/Clear Filters/Refresh from Sheet
+               remain available to every role). Wrapped so js/app.js can toggle the whole
+               group in one call - "display: contents" keeps every field a direct grid item
+               of .filter-bar-grid (same trick as usersAgencyCampaignFilterGroup above). -->
+          <div id="usersAdvancedFilterGroup" class="agency-campaign-filter-group">
+            <!-- Division Filter -->
+            <div class="field-group" style="order: 4;">
+              <label for="filterDivision">Division</label>
+              <select id="filterDivision" class="form-control">
+                <option value="">All Divisions</option>
+              </select>
+            </div>
 
-          <!-- District Filter -->
-          <div class="field-group">
-            <label for="filterDistrict">District</label>
-            <select id="filterDistrict" class="form-control">
-              <option value="">All Districts</option>
-            </select>
-          </div>
+            <!-- District Filter -->
+            <div class="field-group" style="order: 5;">
+              <label for="filterDistrict">District</label>
+              <select id="filterDistrict" class="form-control">
+                <option value="">All Districts</option>
+              </select>
+            </div>
 
-          <!-- Upazila Filter -->
-          <div class="field-group">
-            <label for="filterUpazila">Upazila</label>
-            <select id="filterUpazila" class="form-control">
-              <option value="">All Upazilas</option>
-            </select>
-          </div>
+            <!-- Upazila Filter -->
+            <div class="field-group" style="order: 6;">
+              <label for="filterUpazila">Upazila</label>
+              <select id="filterUpazila" class="form-control">
+                <option value="">All Upazilas</option>
+              </select>
+            </div>
 
-          <!-- Thana Filter -->
-          <div class="field-group">
-            <label for="filterThana">Thana</label>
-            <select id="filterThana" class="form-control">
-              <option value="">All Thanas</option>
-            </select>
-          </div>
+            <!-- Designation Filter -->
+            <div class="field-group" style="order: 8;">
+              <label for="filterDesignation">Designation</label>
+              <select id="filterDesignation" class="form-control">
+                <option value="">All Designations</option>
+              </select>
+            </div>
 
-          <!-- Designation Filter -->
-          <div class="field-group">
-            <label for="filterDesignation">Designation</label>
-            <select id="filterDesignation" class="form-control">
-              <option value="">All Designations</option>
-            </select>
-          </div>
+            <!-- Status Filter -->
+            <div class="field-group" style="order: 10;">
+              <label for="filterStatus">Status</label>
+              <select id="filterStatus" class="form-control">
+                <option value="">All Statuses</option>
+                <option value="Active">Active</option>
+                <option value="Inactive">Inactive</option>
+              </select>
+            </div>
 
-          <!-- Role Filter -->
-          <div class="field-group">
-            <label for="filterRole">Role</label>
-            <select id="filterRole" class="form-control">
-              <option value="">All Roles</option>
-            </select>
-          </div>
+            <!-- From Date Filter (by Created Date) -->
+            <div class="field-group" style="order: 11;">
+              <label for="filterFromDate"
+                data-tooltip="Filters by Created Date - only users created on or after this date.">From Date</label>
+              <input type="date" id="filterFromDate" class="form-control" />
+            </div>
 
-          <!-- Status Filter -->
-          <div class="field-group">
-            <label for="filterStatus">Status</label>
-            <select id="filterStatus" class="form-control">
-              <option value="">All Statuses</option>
-              <option value="Active">Active</option>
-              <option value="Inactive">Inactive</option>
-            </select>
-          </div>
-
-          <!-- From Date Filter (by Created Date) -->
-          <div class="field-group">
-            <label for="filterFromDate"
-              data-tooltip="Filters by Created Date - only users created on or after this date.">From Date</label>
-            <input type="date" id="filterFromDate" class="form-control" />
-          </div>
-
-          <!-- To Date Filter (by Created Date) -->
-          <div class="field-group">
-            <label for="filterToDate"
-              data-tooltip="Filters by Created Date - only users created on or before this date.">To Date</label>
-            <input type="date" id="filterToDate" class="form-control" />
+            <!-- To Date Filter (by Created Date) -->
+            <div class="field-group" style="order: 12;">
+              <label for="filterToDate"
+                data-tooltip="Filters by Created Date - only users created on or before this date.">To Date</label>
+              <input type="date" id="filterToDate" class="form-control" />
+            </div>
           </div>
 
           <!-- Filter Action Buttons -->
           <div class="field-group full-width"
-            style="display: flex; gap: 0.75rem; justify-content: flex-end; align-items: flex-end;">
-            <button type="button" id="btnResetFilters" class="btn btn-outline">Clear Filters</button>
+            style="order: 13; display: flex; gap: 0.75rem; justify-content: flex-end; align-items: flex-end;">
+            <button type="button" id="btnResetFilters" class="btn btn-outline">Clear</button>
             <button type="button" id="btnRefreshUsers" class="btn btn-outline">
               <span class="btn-spinner" aria-hidden="true"></span>
-              <span class="btn-label">🔄 Refresh from Sheet</span>
+              <span class="btn-label">🔄 Refresh</span>
             </button>
             <button type="button" id="btnExportExcel" class="btn btn-success">
               <span class="btn-spinner" aria-hidden="true"></span>
@@ -1203,6 +1230,332 @@
       </div>
     </section>
 
+    <!-- =========================================================================
+         VIEW: Import Users from Excel (SUPER ADMIN ONLY) - a separate, standalone
+         feature from the "Validation" page above (view-excel-validator, untouched).
+         This page reuses the same underlying validation engine (column-mapper.js/
+         row-validator.js/excel-io.js/etc., all shared, unmodified) via its own
+         independent UI wiring (js/excel-validator/user-import-ui.js) and its own
+         "ui"-prefixed element ids, so nothing here can ever collide with or affect
+         the "ev"-prefixed Validation page.
+         ========================================================================= -->
+    <section id="view-user-import" class="view-section">
+      <div class="page-title-box">
+        <h2>Import Users from Excel</h2>
+        <p class="text-muted" style="margin-top:0.25rem;">🔒 Super Admin only.</p>
+        <p>Select a destination Agency and Campaign, upload any Excel/CSV file, auto-detect its columns, validate every
+          field against the existing location, designation, role, DOB and phone rules, then import the valid rows
+          directly into User Registration.</p>
+      </div>
+
+      <div class="ev-stepper" id="uiStepper">
+        <div class="ev-step-dot active" data-step="destination"><span class="ev-step-num">1</span><span
+            class="ev-step-label">Agency &amp; Campaign</span></div>
+        <div class="ev-step-dot" data-step="upload"><span class="ev-step-num">2</span><span
+            class="ev-step-label">Upload</span></div>
+        <div class="ev-step-dot" data-step="mapping"><span class="ev-step-num">3</span><span class="ev-step-label">Map
+            Columns</span></div>
+        <div class="ev-step-dot" data-step="validate"><span class="ev-step-num">4</span><span
+            class="ev-step-label">Validate</span></div>
+        <div class="ev-step-dot" data-step="review"><span class="ev-step-num">5</span><span class="ev-step-label">Review
+            &amp; Import</span></div>
+      </div>
+
+      <!-- Step 1: Destination (Agency + Campaign) -->
+      <div class="ev-panel active" id="uiPanelDestination">
+        <div class="form-card">
+          <div class="card-header-box">
+            <div class="card-step-badge">1</div>
+            <h3>Select Destination Agency &amp; Campaign</h3>
+          </div>
+          <p class="text-muted" style="margin-bottom:0.75rem;">Every imported user will be created under this exact
+            Agency + Campaign, regardless of any Agency/Campaign columns present in the uploaded file.</p>
+
+          <div class="fields-row">
+            <div class="field-group">
+              <label for="uiAgencySelect">Agency</label>
+              <select id="uiAgencySelect" class="form-control">
+                <option value="">Select Agency</option>
+              </select>
+            </div>
+            <div class="field-group">
+              <label for="uiCampaignSelect">Campaign</label>
+              <select id="uiCampaignSelect" class="form-control" disabled>
+                <option value="">Select Campaign</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="ev-actions">
+            <button type="button" id="uiBtnToUpload" class="btn btn-primary" disabled>Continue to Upload →</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 2: Upload -->
+      <div class="ev-panel" id="uiPanelUpload">
+        <div class="form-card">
+          <div class="card-header-box">
+            <div class="card-step-badge">2</div>
+            <h3>Upload Excel / CSV File</h3>
+          </div>
+
+          <div class="ev-dropzone" id="uiDropzone">
+            <input type="file" id="uiFileInput" class="file-input-hidden" accept=".xlsx,.xls,.csv" />
+            <div class="dropzone-content">
+              <span class="upload-icon">📥</span>
+              <p><strong>Drag &amp; drop</strong> your Excel or CSV file here</p>
+              <p class="text-muted">or click to browse — .xlsx, .xls, .csv (max 15MB)</p>
+            </div>
+          </div>
+
+          <div id="uiFileInfo" class="ev-file-info" style="display:none;">
+            <div class="ev-file-info-row">
+              <div>
+                <div class="file-name" id="uiFileName"></div>
+                <div class="text-muted" id="uiFileMeta"></div>
+              </div>
+              <button type="button" id="uiBtnRemoveFile" class="btn btn-secondary btn-sm">Remove</button>
+            </div>
+            <div id="uiUploadProgressWrap" class="ev-progress-wrap" style="display:none;">
+              <div class="ev-progress-bar">
+                <div id="uiUploadProgressFill" class="ev-progress-fill"></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="ev-actions">
+            <button type="button" id="uiBtnToMapping" class="btn btn-primary" disabled>Continue to Column Mapping
+              →</button>
+          </div>
+        </div>
+
+        <div class="form-card">
+          <div class="card-header-box">
+            <h3>Reference Excel File <span class="text-muted">(Optional)</span></h3>
+          </div>
+          <p class="text-muted" style="margin-bottom:0.75rem;">Upload a reference file containing the
+            correct/standard names to use for the <strong>Report To</strong> field. Any column layout is fine — the
+            Name column is detected automatically. Leave this empty and the validator works exactly as before.</p>
+
+          <div class="ev-dropzone" id="uiRefDropzone">
+            <input type="file" id="uiRefFileInput" class="file-input-hidden" accept=".xlsx,.xls,.csv" />
+            <div class="dropzone-content">
+              <span class="upload-icon">📥</span>
+              <p><strong>Drag &amp; drop</strong> your Reference Excel or CSV file here</p>
+              <p class="text-muted">or click to browse — .xlsx, .xls, .csv (max 15MB)</p>
+            </div>
+          </div>
+
+          <div id="uiRefFileInfo" class="ev-file-info" style="display:none;">
+            <div class="ev-file-info-row">
+              <div>
+                <div class="file-name" id="uiRefFileName"></div>
+                <div class="text-muted" id="uiRefFileMeta"></div>
+              </div>
+              <button type="button" id="uiBtnRemoveRefFile" class="btn btn-secondary btn-sm">Remove</button>
+            </div>
+            <div id="uiRefUploadProgressWrap" class="ev-progress-wrap" style="display:none;">
+              <div class="ev-progress-bar">
+                <div id="uiRefUploadProgressFill" class="ev-progress-fill"></div>
+              </div>
+            </div>
+          </div>
+          <p class="text-muted" style="margin-top:0.5rem; margin-bottom:0;">Optional — the validator will work
+            without this file.</p>
+        </div>
+      </div>
+
+      <!-- Step 3: Column Mapping -->
+      <div class="ev-panel" id="uiPanelMapping">
+        <div class="form-card">
+          <div class="card-header-box">
+            <div class="card-step-badge">3</div>
+            <h3>Detected Column Mapping</h3>
+          </div>
+          <p class="text-muted" style="margin-bottom:0.75rem;">Review how your columns were mapped to system fields.
+            Adjust any that weren't detected confidently using the dropdown.</p>
+          <div class="ev-table-wrap">
+            <table class="data-table" id="uiMappingTable">
+              <thead>
+                <tr>
+                  <th>Uploaded Column</th>
+                  <th>System Field</th>
+                  <th>Confidence</th>
+                </tr>
+              </thead>
+              <tbody id="uiMappingTableBody"></tbody>
+            </table>
+          </div>
+          <div class="ev-actions">
+            <button type="button" id="uiBtnBackToUpload" class="btn btn-secondary">← Back</button>
+            <button type="button" id="uiBtnToValidate" class="btn btn-primary">Validate Data →</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 4: Validate -->
+      <div class="ev-panel" id="uiPanelValidate">
+        <div class="form-card ev-validate-card">
+          <div class="card-header-box">
+            <div class="card-step-badge">4</div>
+            <h3>Validating Data…</h3>
+          </div>
+          <div class="ev-progress-wrap">
+            <div class="ev-progress-bar">
+              <div id="uiValidateProgressFill" class="ev-progress-fill"></div>
+            </div>
+          </div>
+          <p class="text-muted" id="uiValidateProgressText">Validating 0 / 0 rows</p>
+        </div>
+      </div>
+
+      <!-- Step 5: Review & Import -->
+      <div class="ev-panel" id="uiPanelReview">
+        <div class="ev-dashboard" id="uiDashboard"></div>
+
+        <div class="form-card" id="uiReportToSummary" style="display:none;"></div>
+
+        <div class="ev-actions" style="margin-bottom:1rem;">
+          <button type="button" id="uiBtnToggleReportToLog" class="btn btn-outline btn-sm" style="display:none;">🧾
+            View Report To Change Log</button>
+        </div>
+
+        <div class="form-card" id="uiReportToChangeLogWrap" style="display:none;">
+          <div class="card-header-box">
+            <h3>Report To Change Log</h3>
+          </div>
+          <p class="text-muted" style="margin-bottom:0.75rem;">Full audit trail of every Report To value the system
+            suggested, applied, or flagged against the Reference Excel — including declined and pending
+            suggestions.</p>
+          <div class="ev-table-wrap">
+            <table class="data-table" id="uiReportToChangeLogTable">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Original</th>
+                  <th>Changed To</th>
+                  <th>Reason</th>
+                  <th>Matching Method</th>
+                  <th>Confidence</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="uiReportToChangeLogBody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="form-card">
+          <div class="card-header-box">
+            <div class="card-step-badge">5</div>
+            <h3>Review Corrections</h3>
+          </div>
+
+          <div class="ev-filter-bar" id="uiFilterBar">
+            <button type="button" class="ev-filter-btn active" data-filter="all">All</button>
+            <button type="button" class="ev-filter-btn" data-filter="valid">Valid</button>
+            <button type="button" class="ev-filter-btn" data-filter="corrected">Corrected</button>
+            <button type="button" class="ev-filter-btn" data-filter="invalid">Invalid</button>
+            <button type="button" class="ev-filter-btn" data-filter="review">Needs Review</button>
+            <span class="ev-filter-bar-spacer"></span>
+            <button type="button" id="uiBtnAcceptAllReviews" class="btn btn-outline btn-sm">✓ Accept All
+              Suggestions</button>
+            <button type="button" id="uiBtnDeclineAllReviews" class="btn btn-outline btn-sm">✕ Decline All
+              Suggestions</button>
+          </div>
+
+          <div class="ev-table-wrap">
+            <table class="data-table" id="uiReviewTable">
+              <thead>
+                <tr id="uiReviewTableHead"></tr>
+              </thead>
+              <tbody id="uiReviewTableBody"></tbody>
+            </table>
+          </div>
+
+          <div class="ev-actions">
+            <button type="button" id="uiBtnBackToUploadFromReview" class="btn btn-secondary">↺ Validate Another
+              File</button>
+            <button type="button" id="uiBtnDownload" class="btn btn-success">⬇️ Download Corrected Excel</button>
+            <button type="button" id="uiBtnDownloadReport" class="btn btn-outline">⬇️ Download Validation
+              Report</button>
+          </div>
+        </div>
+
+        <div class="form-card" id="uiImportCard">
+          <div class="card-header-box">
+            <h3>Import Valid Users to Database</h3>
+          </div>
+          <p class="text-muted" style="margin-bottom:0.75rem;">Only rows that are currently <strong>Valid</strong> or
+            <strong>Corrected</strong> (including accepted suggestions) will be imported. Rows still marked
+            <strong>Invalid</strong> or with a pending <strong>Needs Review</strong> item are skipped — resolve or
+            correct them first if they should be included.
+          </p>
+
+          <div class="ev-actions" style="margin-bottom:1rem;">
+            <button type="button" id="uiBtnImport" class="btn btn-primary">📤 Import Valid Users to Database</button>
+          </div>
+
+          <div id="uiImportProgressWrap" class="ev-progress-wrap" style="display:none;">
+            <div class="ev-progress-bar">
+              <div id="uiImportProgressFill" class="ev-progress-fill"></div>
+            </div>
+          </div>
+
+          <div class="ev-dashboard" id="uiImportSummary" style="display:none;"></div>
+
+          <div class="ev-table-wrap" id="uiImportResultsWrap" style="display:none;">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Name</th>
+                  <th>Result</th>
+                  <th>User Code / Error</th>
+                </tr>
+              </thead>
+              <tbody id="uiImportResultsBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- =========================================================================
+         VIEW: Import History (Super Admin only)
+         ========================================================================= -->
+    <section id="view-import-history" class="view-section">
+      <div class="page-title-box">
+        <h2>Import History</h2>
+        <p class="text-muted" style="margin-top:0.25rem;">🔒 Super Admin only.</p>
+        <p>Audit trail of every Excel → User Registration import batch.</p>
+      </div>
+
+      <div class="dashboard-card">
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>File Name</th>
+                <th>Agency</th>
+                <th>Campaign</th>
+                <th>Imported By</th>
+                <th>Date</th>
+                <th>Total Rows</th>
+                <th>Successful</th>
+                <th>Failed</th>
+                <th>Details</th>
+              </tr>
+            </thead>
+            <tbody id="importHistoryTableBody">
+              <!-- Dynamically Populated -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
   </main>
 
   <!-- =========================================================================
@@ -1242,6 +1595,26 @@
       <div class="modal-footer">
         <button type="button" class="btn btn-secondary"
           onclick="document.getElementById('userDetailModal').classList.remove('open')">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- =========================================================================
+       MODAL: Image Lightbox - zoomable full-size viewer for the User Photo /
+       NID Front / NID Back thumbnails shown elsewhere (Users table avatar,
+       User Profile Details, NID Information section).
+       ========================================================================= -->
+  <div id="imageLightboxModal" class="modal-backdrop image-lightbox-backdrop">
+    <div class="image-lightbox-box">
+      <div class="image-lightbox-toolbar">
+        <button type="button" id="btnLightboxZoomOut" class="btn btn-outline btn-sm" title="Zoom Out">➖</button>
+        <button type="button" id="btnLightboxZoomReset" class="btn btn-outline btn-sm" title="Reset Zoom">100%</button>
+        <button type="button" id="btnLightboxZoomIn" class="btn btn-outline btn-sm" title="Zoom In">➕</button>
+        <button type="button" id="btnCloseLightbox" class="btn-close-modal image-lightbox-close"
+          title="Close">&times;</button>
+      </div>
+      <div class="image-lightbox-viewport" id="imageLightboxViewport">
+        <img id="imageLightboxImg" src="" alt="Preview" />
       </div>
     </div>
   </div>
@@ -1484,6 +1857,7 @@
   <script src="js/excel-validator/row-validator.js"></script>
   <script src="js/excel-validator/excel-io.js"></script>
   <script src="js/excel-validator/excel-validator-ui.js"></script>
+  <script src="js/excel-validator/user-import-ui.js"></script>
 </body>
 
 </html>

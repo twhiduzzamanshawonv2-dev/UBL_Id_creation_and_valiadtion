@@ -17,7 +17,7 @@
 
 const FIXED_ROLES = ['BP', 'Supervisor', 'FC'];
 const FIXED_DESIGNATIONS = ['BP', 'Supervisor', 'FC'];
-const DEFAULT_PAGE_SIZE = 25;
+const DEFAULT_PAGE_SIZE = 10;
 
 class StorageManager {
   constructor() {

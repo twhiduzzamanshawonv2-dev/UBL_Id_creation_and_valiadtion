@@ -911,18 +911,13 @@ $$;
 grant execute on function public.get_active_campaigns_count(uuid, uuid) to authenticated;
 revoke execute on function public.get_active_campaigns_count(uuid, uuid) from anon;
 
--- Performs the full user-registration write (duplicate check + Report To
--- resolution + insert) atomically and returns the created row shaped like
--- `users_with_report_to`. Authenticated-only (anon revoked - there is no more
--- public registration). For a non-Super-Admin caller, agency_id/campaign_id
--- are ALWAYS resolved server-side from account_profiles via auth.uid() -
--- `p->>'agencyId'`/`p->>'campaignId'` are silently ignored for that caller,
--- never trusted, even though the app still sends them for a Super Admin
--- caller's benefit (who has no fixed scope of their own). This mirrors
--- check_duplicate_public()/get_report_to_candidates() above, and is defense
--- in depth on top of the `users` INSERT RLS policy, which would reject a
--- mismatched agency_id/campaign_id regardless.
-create or replace function public.register_user(p jsonb)
+-- Shared row-insertion core used by BOTH register_user() (manual, single-row)
+-- and import_users_batch() (Super-Admin-only Excel import, many rows) - the
+-- duplicate check + Report To resolution + insert must never diverge between
+-- the two entry points (spec: "Do not create a separate user creation
+-- mechanism with different rules"). Not granted directly to `authenticated` -
+-- only callable from within another SECURITY DEFINER function in this file.
+create or replace function public._insert_registered_user(v_agency_id uuid, v_campaign_id uuid, p jsonb, v_actor text)
 returns jsonb
 language plpgsql
 security definer
@@ -933,39 +928,13 @@ declare
   v_nid text := trim(p->>'nid');
   v_designation text := p->>'designation';
   v_role text := p->>'role';
-  v_agency_id uuid;
-  v_campaign_id uuid;
   v_report_to_name text := nullif(trim(p->>'reportTo'), '');
   v_target_designation text;
   v_report_to_id uuid;
   v_row public.users%rowtype;
   v_dup jsonb;
   v_campaign_agency_id uuid;
-  v_caller_role text;
-  v_caller_status text;
-  v_caller_agency_id uuid;
-  v_caller_campaign_id uuid;
-  v_actor text;
 begin
-  select role, status, agency_id, campaign_id into v_caller_role, v_caller_status, v_caller_agency_id, v_caller_campaign_id
-    from public.account_profiles where id = auth.uid();
-
-  if v_caller_role is null then
-    v_caller_role := 'super_admin'; -- no profile row = legacy Super Admin bootstrap rule
-  elsif v_caller_status <> 'Active' then
-    raise exception 'Your account is not active. Contact your administrator.';
-  end if;
-
-  if v_caller_role = 'super_admin' then
-    v_agency_id := (p->>'agencyId')::uuid;
-    v_campaign_id := (p->>'campaignId')::uuid;
-  else
-    v_agency_id := v_caller_agency_id;
-    v_campaign_id := v_caller_campaign_id;
-  end if;
-
-  v_actor := coalesce(auth.jwt()->>'email', 'Unknown Account');
-
   if v_agency_id is null or v_campaign_id is null then
     raise exception 'Agency and Campaign are required.';
   end if;
@@ -1038,8 +1007,243 @@ begin
 end;
 $$;
 
+-- Not granted to `authenticated`/`anon` directly - only register_user() and
+-- import_users_batch() (both SECURITY DEFINER) call it.
+revoke all on function public._insert_registered_user(uuid, uuid, jsonb, text) from public, authenticated, anon;
+
+-- Performs the full user-registration write (duplicate check + Report To
+-- resolution + insert) atomically and returns the created row shaped like
+-- `users_with_report_to`. Authenticated-only (anon revoked - there is no more
+-- public registration). For a non-Super-Admin caller, agency_id/campaign_id
+-- are ALWAYS resolved server-side from account_profiles via auth.uid() -
+-- `p->>'agencyId'`/`p->>'campaignId'` are silently ignored for that caller,
+-- never trusted, even though the app still sends them for a Super Admin
+-- caller's benefit (who has no fixed scope of their own). This mirrors
+-- check_duplicate_public()/get_report_to_candidates() above, and is defense
+-- in depth on top of the `users` INSERT RLS policy, which would reject a
+-- mismatched agency_id/campaign_id regardless.
+create or replace function public.register_user(p jsonb)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_agency_id uuid;
+  v_campaign_id uuid;
+  v_caller_role text;
+  v_caller_status text;
+  v_caller_agency_id uuid;
+  v_caller_campaign_id uuid;
+  v_actor text;
+begin
+  select role, status, agency_id, campaign_id into v_caller_role, v_caller_status, v_caller_agency_id, v_caller_campaign_id
+    from public.account_profiles where id = auth.uid();
+
+  if v_caller_role is null then
+    v_caller_role := 'super_admin'; -- no profile row = legacy Super Admin bootstrap rule
+  elsif v_caller_status <> 'Active' then
+    raise exception 'Your account is not active. Contact your administrator.';
+  end if;
+
+  if v_caller_role = 'super_admin' then
+    v_agency_id := (p->>'agencyId')::uuid;
+    v_campaign_id := (p->>'campaignId')::uuid;
+  else
+    v_agency_id := v_caller_agency_id;
+    v_campaign_id := v_caller_campaign_id;
+  end if;
+
+  v_actor := coalesce(auth.jwt()->>'email', 'Unknown Account');
+
+  return public._insert_registered_user(v_agency_id, v_campaign_id, p, v_actor);
+end;
+$$;
+
 grant execute on function public.register_user(jsonb) to authenticated;
 revoke execute on function public.register_user(jsonb) from anon;
+
+-- ----------------------------------------------------------------------------
+-- Excel -> User Registration Import (SUPER ADMIN ONLY)
+-- ----------------------------------------------------------------------------
+-- Audit trail: one row per import batch. Written ONLY by import_users_batch()
+-- below (no direct insert/update policy - RLS only grants SELECT), so
+-- `uploaded_by`/counts can never be forged by a client-supplied value.
+create table if not exists public.import_batches (
+  id             uuid primary key default gen_random_uuid(),
+  file_name      text,
+  uploaded_by    text not null,
+  uploader_role  text not null default 'super_admin',
+  agency_id      uuid references public.agencies(id),
+  campaign_id    uuid references public.campaigns(id),
+  created_date   timestamptz not null default now(),
+  total_rows     int not null default 0,
+  valid_rows     int not null default 0,
+  invalid_rows   int not null default 0,
+  corrected_rows int not null default 0,
+  imported_rows  int not null default 0,
+  failed_rows    int not null default 0
+);
+
+comment on table public.import_batches is
+  'Audit trail for the Super-Admin-only Excel -> User Registration Import feature. Rows are written exclusively by import_users_batch().';
+
+alter table public.import_batches enable row level security;
+
+drop policy if exists import_batches_select_super_admin on public.import_batches;
+create policy import_batches_select_super_admin on public.import_batches
+  for select
+  to authenticated
+  using (public.is_super_admin());
+
+-- Per-row detail for each import batch (spec: "details import history for every
+-- import file") - one row per attempted Excel row, so Import History can show
+-- exactly which rows succeeded (with the user_code created) or failed (with why),
+-- not just the aggregate counts on import_batches. Written ONLY by
+-- import_users_batch() alongside its parent import_batches row - cascades on
+-- delete so a removed batch never leaves orphaned detail rows.
+create table if not exists public.import_batch_rows (
+  id            uuid primary key default gen_random_uuid(),
+  batch_id      uuid not null references public.import_batches(id) on delete cascade,
+  row_index     int not null,
+  row_name      text,
+  success       boolean not null,
+  user_code     text,
+  error_message text
+);
+
+comment on table public.import_batch_rows is
+  'Per-row outcome (success/failure, user_code or error) for one import_batches batch. Written exclusively by import_users_batch().';
+
+create index if not exists idx_import_batch_rows_batch_id on public.import_batch_rows (batch_id, row_index);
+
+alter table public.import_batch_rows enable row level security;
+
+drop policy if exists import_batch_rows_select_super_admin on public.import_batch_rows;
+create policy import_batch_rows_select_super_admin on public.import_batch_rows
+  for select
+  to authenticated
+  using (public.is_super_admin());
+
+-- The actual backend enforcement point for the Import feature: this RPC is
+-- the ONLY way rows land in import_batches / get inserted via the import UI,
+-- and the very first check rejects any caller that isn't Super Admin -
+-- independent of anything the frontend hides or shows, and independent of
+-- register_user()'s own scoping rules (an Agency Admin is allowed to call
+-- register_user() for their OWN single-user manual registration, so that RPC
+-- alone can't be the import gate - see supabase/schema.sql plan notes).
+-- `p_rows` is a jsonb array, each element shaped exactly like register_user()'s
+-- `p` argument (camelCase fields), minus agencyId/campaignId (fixed for the
+-- whole batch via p_agency_id/p_campaign_id). Rows are processed FC ->
+-- Supervisor -> BP so a Report To target created earlier in the same batch
+-- is already visible to a later row that reports to them. One failing row
+-- (duplicate, bad Report To, etc.) does not abort the batch - it is recorded
+-- as a per-row failure and processing continues.
+create or replace function public.import_users_batch(
+  p_agency_id uuid, p_campaign_id uuid, p_file_name text, p_rows jsonb,
+  p_total_rows int default null, p_valid_rows int default null,
+  p_invalid_rows int default null, p_corrected_rows int default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_actor text;
+  v_campaign_agency_id uuid;
+  v_row jsonb;
+  v_result jsonb;
+  v_results jsonb := '[]'::jsonb;
+  v_row_index int;
+  v_total int := 0;
+  v_imported int := 0;
+  v_failed int := 0;
+  v_batch_id uuid;
+begin
+  if not public.is_super_admin() then
+    raise exception 'Access denied: only Super Admin can import users from Excel.';
+  end if;
+
+  if p_agency_id is null or p_campaign_id is null then
+    raise exception 'Agency and Campaign are required.';
+  end if;
+
+  select agency_id into v_campaign_agency_id from public.campaigns where id = p_campaign_id;
+  if v_campaign_agency_id is null or v_campaign_agency_id <> p_agency_id then
+    raise exception 'Selected Campaign does not belong to the selected Agency.';
+  end if;
+
+  v_actor := coalesce(auth.jwt()->>'email', 'Unknown Account');
+
+  -- Sort rows FC(0) -> Supervisor(1) -> BP(2) -> anything unrecognized(3) last,
+  -- preserving original relative (upload) order within each designation via
+  -- ordinality, so Report To targets exist before their reports are inserted.
+  for v_row_index, v_row in
+    select (r.idx - 1), r.value
+    from jsonb_array_elements(coalesce(p_rows, '[]'::jsonb)) with ordinality as r(value, idx)
+    order by
+      case r.value->>'designation'
+        when 'FC' then 0
+        when 'Supervisor' then 1
+        when 'BP' then 2
+        else 3
+      end,
+      r.idx
+  loop
+    v_total := v_total + 1;
+    begin
+      v_result := public._insert_registered_user(p_agency_id, p_campaign_id, v_row, v_actor);
+      v_imported := v_imported + 1;
+      v_results := v_results || jsonb_build_object(
+        'rowIndex', v_row_index, 'success', true,
+        'user_code', v_result->>'user_code', 'name', v_row->>'name'
+      );
+    exception when others then
+      v_failed := v_failed + 1;
+      v_results := v_results || jsonb_build_object(
+        'rowIndex', v_row_index, 'success', false,
+        'error', sqlerrm, 'name', v_row->>'name'
+      );
+    end;
+  end loop;
+
+  insert into public.import_batches (
+    file_name, uploaded_by, uploader_role, agency_id, campaign_id,
+    total_rows, valid_rows, invalid_rows, corrected_rows, imported_rows, failed_rows
+  ) values (
+    p_file_name, v_actor, 'super_admin', p_agency_id, p_campaign_id,
+    coalesce(p_total_rows, v_total), coalesce(p_valid_rows, v_total),
+    coalesce(p_invalid_rows, 0), coalesce(p_corrected_rows, 0), v_imported, v_failed
+  )
+  returning id into v_batch_id;
+
+  -- Persist the per-row detail (spec: "details import history for every import
+  -- file") - v_results already carries exactly this shape, one element per
+  -- attempted row, so this is a straight fan-out insert rather than recomputing
+  -- anything.
+  insert into public.import_batch_rows (batch_id, row_index, row_name, success, user_code, error_message)
+  select
+    v_batch_id,
+    (r->>'rowIndex')::int,
+    r->>'name',
+    (r->>'success')::boolean,
+    r->>'user_code',
+    r->>'error'
+  from jsonb_array_elements(v_results) r;
+
+  return jsonb_build_object(
+    'batchId', v_batch_id,
+    'totalRows', v_total,
+    'importedRows', v_imported,
+    'failedRows', v_failed,
+    'results', v_results
+  );
+end;
+$$;
+
+grant execute on function public.import_users_batch(uuid, uuid, text, jsonb, int, int, int, int) to authenticated;
+revoke execute on function public.import_users_batch(uuid, uuid, text, jsonb, int, int, int, int) from anon;
 
 -- ----------------------------------------------------------------------------
 -- Convenience view: users with their Report To person's name pre-joined, so

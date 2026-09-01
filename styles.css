@@ -1030,6 +1030,14 @@ label {
   border: 1px solid var(--border-color);
 }
 
+/* Clear Filters / Refresh from Sheet - same .btn base already matches their
+   height; only the width differed (their label text lengths differ), so a
+   shared min-width is enough to make the pair line up evenly. */
+#btnResetFilters,
+#btnRefreshUsers {
+  min-width: 190px;
+}
+
 /* Dashboard KPI Summary Cards */
 .kpi-grid {
   display: grid;
@@ -1315,6 +1323,97 @@ label {
   object-fit: contain;
   border-radius: var(--radius-sm);
   background: #ffffff;
+  cursor: zoom-in;
+}
+
+/* User Profile Details modal header - was missing entirely, so the raw
+   uploaded photo (often several megapixels) rendered at its native pixel
+   size with no constraint at all ("resolution is not correct"). Fixed size,
+   cropped to a circle, same clickable-to-zoom affordance as every other
+   photo/document thumbnail in the app. */
+.user-detail-header {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  margin-bottom: 1.5rem;
+}
+
+.user-detail-avatar {
+  width: 96px;
+  height: 96px;
+  min-width: 96px;
+  border-radius: var(--radius-full);
+  object-fit: cover;
+  border: 2px solid var(--border-color);
+  cursor: zoom-in;
+}
+
+.user-avatar {
+  cursor: zoom-in;
+}
+
+/* Image Lightbox - zoomable full-size viewer, opened by clicking any user
+   photo / NID thumbnail. Reuses .modal-backdrop's fixed/flex/fade-in
+   behavior (including the existing "click outside to close" handler in
+   app.js) - only the inner box/toolbar/viewport below are new. */
+.image-lightbox-backdrop {
+  background: rgba(15, 23, 42, 0.9);
+  z-index: 1100; /* above every other modal (1000), so it can open from inside the User Details modal */
+}
+
+.image-lightbox-box {
+  width: min(92vw, 900px);
+  height: min(88vh, 900px);
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.image-lightbox-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.image-lightbox-toolbar .btn {
+  background: rgba(255, 255, 255, 0.92);
+}
+
+#btnLightboxZoomReset {
+  min-width: 4.5rem;
+  cursor: default;
+}
+
+.image-lightbox-close {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: var(--radius-full);
+  width: 2.25rem;
+  height: 2.25rem;
+  line-height: 1;
+}
+
+/* Zoom is implemented as an actual width change (not a CSS transform) so the
+   image's real layout box grows past the viewport and this overflow:auto
+   container produces genuine scrollbars to pan around it - a transform-based
+   zoom would only visually scale in place with no way to reach the parts
+   that spill outside the box. */
+.image-lightbox-viewport {
+  flex: 1;
+  overflow: auto;
+  text-align: center;
+  border-radius: var(--radius-lg);
+  background: rgba(0, 0, 0, 0.25);
+  padding: 0.5rem;
+}
+
+.image-lightbox-viewport img {
+  display: inline-block;
+  width: 100%;
+  height: auto;
+  transition: width 0.15s ease-out;
+  user-select: none;
 }
 
 /* Config Chips for Settings */
