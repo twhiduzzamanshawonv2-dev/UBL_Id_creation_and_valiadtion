@@ -175,11 +175,11 @@ const BD_LOCATIONS = {
       "Jhenaigati": ["Jhenaigati"]
     }
   },
-  "Rongpur": {
-    "Rongpur": {
-      "Badarganj": ["Badarganj"]
-    }
-  },
+  // "Rongpur": {
+  //   "Rongpur": {
+  //     "Badarganj": ["Badarganj"]
+  //   }
+  // },
   "Rangpur": {
     "Dinajpur": {
       "Fulbari": ["Fulbari"],
