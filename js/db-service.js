@@ -426,9 +426,11 @@ const dbService = {
 
   /**
    * Updates a user (Quick Edit modal: name, mobile, designation, role,
-   * reportTo). `updatedFields` uses the same camelCase keys as the app's
-   * user object. Looked up and updated by user_code (the app-facing id),
-   * not the internal uuid, so callers never need to know about `_pk`.
+   * reportTo, plus - Super Admin only, see js/app.js openUserEditModal -
+   * email/gender/father's & mother's name/DOB/NID). `updatedFields` uses the
+   * same camelCase keys as the app's user object. Looked up and updated by
+   * user_code (the app-facing id), not the internal uuid, so callers never
+   * need to know about `_pk`.
    *
    * Agency/Campaign are NOT editable here (reassigning a person to a
    * different campaign would silently change headcount/reporting elsewhere -
@@ -446,9 +448,23 @@ const dbService = {
     if (updatedFields.mobile !== undefined) patch.mobile = String(updatedFields.mobile).trim();
     if (updatedFields.designation !== undefined) patch.designation = updatedFields.designation;
     if (updatedFields.role !== undefined) patch.role = updatedFields.role;
+    if (updatedFields.email !== undefined) patch.email = updatedFields.email;
+    if (updatedFields.gender !== undefined) patch.gender = updatedFields.gender;
+    if (updatedFields.fatherName !== undefined) patch.father_name = updatedFields.fatherName;
+    if (updatedFields.motherName !== undefined) patch.mother_name = updatedFields.motherName;
+    if (updatedFields.dob !== undefined) patch.dob = updatedFields.dob;
+    if (updatedFields.nid !== undefined) patch.nid = String(updatedFields.nid).trim();
 
-    if (patch.mobile !== undefined) {
-      const dup = await this.checkDuplicate(patch.mobile, null, agencyId, campaignId, userCode);
+    // Single authoritative duplicate check covering whichever of Mobile/NID/Email are
+    // actually being changed here - same check_duplicate_public() RPC used everywhere else,
+    // scoped to this user's own (unchangeable) Agency+Campaign and excluding this user's own row.
+    if (patch.mobile !== undefined || patch.nid !== undefined || patch.email !== undefined) {
+      const dup = await this.checkDuplicate(
+        patch.mobile !== undefined ? patch.mobile : null,
+        patch.nid !== undefined ? patch.nid : null,
+        agencyId, campaignId, userCode,
+        patch.email !== undefined ? patch.email : null
+      );
       if (dup.duplicate) throw new Error(dup.message);
     }
 

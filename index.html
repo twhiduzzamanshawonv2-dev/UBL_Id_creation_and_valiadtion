@@ -1660,6 +1660,50 @@
           <label for="editReportTo">Report To</label>
           <select id="editReportTo" class="form-control"></select>
         </div>
+
+        <!-- Super-Admin-only fields (js/app.js openUserEditModal toggles this whole block via
+             storage.isSuperAdmin() - a scoped Agency Admin never sees or can submit these). -->
+        <div id="editSuperAdminFields" style="display:none;">
+          <hr style="margin:1rem 0;border:none;border-top:1px solid var(--border-color);" />
+          <p class="text-muted" style="margin:0 0 0.75rem;font-size:0.8rem;">Additional Details (Super Admin only)</p>
+
+          <div class="field-group mb-3">
+            <label for="editEmail">Email</label>
+            <input type="email" id="editEmail" class="form-control" />
+            <span class="error-message" id="editEmailError"></span>
+          </div>
+          <div class="field-group mb-3">
+            <label for="editGender">Gender</label>
+            <select id="editGender" class="form-control">
+              <option value="">-- Select Gender --</option>
+              <option value="Male">Male</option>
+              <option value="Female">Female</option>
+            </select>
+            <span class="error-message" id="editGenderError"></span>
+          </div>
+          <div class="field-group mb-3">
+            <label for="editFatherName">Father's Name</label>
+            <input type="text" id="editFatherName" class="form-control" />
+            <span class="error-message" id="editFatherNameError"></span>
+          </div>
+          <div class="field-group mb-3">
+            <label for="editMotherName">Mother's Name</label>
+            <input type="text" id="editMotherName" class="form-control" />
+            <span class="error-message" id="editMotherNameError"></span>
+          </div>
+          <div class="field-group mb-3">
+            <label for="editDob">Date of Birth</label>
+            <input type="date" id="editDob" class="form-control" />
+            <span class="field-hint">Must be at least 18 years old as of today</span>
+            <span class="error-message" id="editDobError"></span>
+          </div>
+          <div class="field-group mb-3">
+            <label for="editNid">NID Number</label>
+            <input type="text" id="editNid" class="form-control" maxlength="17" />
+            <span class="field-hint">Numeric only (10, 13, or 17 digits)</span>
+            <span class="error-message" id="editNidError"></span>
+          </div>
+        </div>
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-secondary"

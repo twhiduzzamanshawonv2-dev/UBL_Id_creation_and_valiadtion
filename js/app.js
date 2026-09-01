@@ -2392,6 +2392,24 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('editName').value = u.name;
     document.getElementById('editMobile').value = u.mobile;
 
+    // Super-Admin-only fields (email/gender/father's & mother's name/DOB/NID) - a scoped
+    // Agency Admin never sees this block, so it's never populated (or submittable) for them.
+    const superAdminFieldsGroup = document.getElementById('editSuperAdminFields');
+    const isSuperAdminEditor = storage.isSuperAdmin();
+    if (superAdminFieldsGroup) {
+      superAdminFieldsGroup.style.display = isSuperAdminEditor ? 'block' : 'none';
+    }
+    if (isSuperAdminEditor) {
+      document.getElementById('editEmail').value = u.email || '';
+      document.getElementById('editGender').value = u.gender || '';
+      document.getElementById('editFatherName').value = u.fatherName || '';
+      document.getElementById('editMotherName').value = u.motherName || '';
+      document.getElementById('editDob').value = u.dob || '';
+      document.getElementById('editNid').value = u.nid || '';
+      ['editEmailError', 'editGenderError', 'editFatherNameError', 'editMotherNameError', 'editDobError', 'editNidError']
+        .forEach(id => { const el = document.getElementById(id); if (el) el.textContent = ''; });
+    }
+
     // Designations
     const editDesSelect = document.getElementById('editDesignation');
     editDesSelect.innerHTML = '';
@@ -3613,12 +3631,60 @@ document.addEventListener('DOMContentLoaded', async () => {
           return;
         }
 
-        // Duplicate mobile check excluding current user - authoritative query against
-        // Supabase, not a local cache. Scoped to this user's (unchangeable) Agency+Campaign.
+        // Super-Admin-only extra fields (email/gender/father's & mother's name/DOB/NID) - only
+        // read/validated/submitted when the block is actually visible (Super Admin editor),
+        // so a scoped Agency Admin's save can never touch them either way.
+        const superAdminFieldsGroup = document.getElementById('editSuperAdminFields');
+        const editingSuperAdminFields = !!superAdminFieldsGroup && superAdminFieldsGroup.style.display !== 'none';
+        let extraFields = null;
+
+        if (editingSuperAdminFields) {
+          const updatedEmail = document.getElementById('editEmail').value.trim();
+          const updatedGender = document.getElementById('editGender').value;
+          const updatedFatherName = document.getElementById('editFatherName').value;
+          const updatedMotherName = document.getElementById('editMotherName').value;
+          const updatedDob = document.getElementById('editDob').value;
+          const updatedNid = document.getElementById('editNid').value.trim();
+
+          const eCheck = validateEmail(updatedEmail);
+          if (!eCheck.valid) { alert(eCheck.message); return; }
+
+          if (!updatedGender) { alert('Please select Gender.'); return; }
+
+          const fCheck = validateName(updatedFatherName, "Father's Name");
+          if (!fCheck.valid) { alert(fCheck.message); return; }
+
+          const moCheck = validateName(updatedMotherName, "Mother's Name");
+          if (!moCheck.valid) { alert(moCheck.message); return; }
+
+          const ageCheck = validateMinimumAge(updatedDob);
+          if (!ageCheck.valid) { alert(ageCheck.message); return; }
+
+          const nidCheck = validateNID(updatedNid);
+          if (!nidCheck.valid) { alert(nidCheck.message); return; }
+
+          document.getElementById('editFatherName').value = updatedFatherName;
+          document.getElementById('editMotherName').value = updatedMotherName;
+
+          extraFields = {
+            email: eCheck.cleanValue || updatedEmail,
+            gender: updatedGender,
+            fatherName: fCheck.cleanValue,
+            motherName: moCheck.cleanValue,
+            dob: updatedDob,
+            nid: nidCheck.cleanValue
+          };
+        }
+
+        // Duplicate mobile/NID/email check excluding current user - authoritative query
+        // against Supabase, not a local cache. Scoped to this user's (unchangeable) Agency+Campaign.
         const dupCheck = await storage.checkDuplicate(
-          updatedMobile, null, editingUserAgencyId, editingUserCampaignId, editingUserId
+          updatedMobile,
+          extraFields ? extraFields.nid : null,
+          editingUserAgencyId, editingUserCampaignId, editingUserId,
+          extraFields ? extraFields.email : null
         );
-        if (dupCheck.duplicate && dupCheck.field === 'Mobile Number') {
+        if (dupCheck.duplicate) {
           alert(dupCheck.message);
           return;
         }
@@ -3652,7 +3718,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             mobile: updatedMobile,
             designation: updatedDesignation,
             role: updatedRole,
-            reportTo: updatedReportTo
+            reportTo: updatedReportTo,
+            ...(extraFields || {})
           }, editingUserAgencyId, editingUserCampaignId);
 
           editModal.classList.remove('open');
