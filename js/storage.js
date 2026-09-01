@@ -78,8 +78,8 @@ class StorageManager {
     return dbService.getSignedDocUrls(user);
   }
 
-  async checkDuplicate(mobile, nid, agencyId, campaignId, excludeId = null) {
-    return dbService.checkDuplicate(mobile, nid, agencyId, campaignId, excludeId);
+  async checkDuplicate(mobile, nid, agencyId, campaignId, excludeId = null, email = null) {
+    return dbService.checkDuplicate(mobile, nid, agencyId, campaignId, excludeId, email);
   }
 
   async getReportToUsers(targetDesignation, agencyId, campaignId, excludeId = null) {

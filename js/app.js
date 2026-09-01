@@ -1550,13 +1550,13 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     if (!isValid) return false;
 
-    // Check Duplicate Mobile & NID - authoritative check against Supabase (not a local
+    // Check Duplicate Mobile & NID & Email - authoritative check against Supabase (not a local
     // cache), since a full user list is no longer held in memory. Scoped to the
-    // currently-selected Agency+Campaign - the same person CAN be registered again
+    // currently-selected Agency+Campaign - the same person/address CAN be registered again
     // under a different Agency+Campaign (see check_duplicate_public in schema.sql).
     const agencyVal = document.getElementById('agency').value;
     const campaignVal = document.getElementById('campaign').value;
-    const dupCheck = await storage.checkDuplicate(mobileVal, nidVal, agencyVal, campaignVal);
+    const dupCheck = await storage.checkDuplicate(mobileVal, nidVal, agencyVal, campaignVal, null, emailVal);
     if (dupCheck.duplicate) {
       const warningBanner = document.getElementById('duplicateWarningBanner');
       if (warningBanner) {
@@ -2299,6 +2299,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           <div><strong>Father's Name:</strong> ${u.fatherName}</div>
           <div><strong>Mother's Name:</strong> ${u.motherName}</div>
           <div><strong>Mobile Number:</strong> ${u.mobile}</div>
+          <div><strong>Email:</strong> ${u.email || 'N/A'}</div>
           <div><strong>Date of Birth:</strong> ${formatDisplayDate(u.dob)}</div>
         </div>
       </div>

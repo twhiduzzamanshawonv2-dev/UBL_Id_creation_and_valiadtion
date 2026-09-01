@@ -276,17 +276,17 @@ const dbService = {
   },
 
   /**
-   * Authoritative duplicate check (mobile/NID), run against the database -
+   * Authoritative duplicate check (mobile/NID/email), run against the database -
    * not a possibly-stale in-memory cache - right before insert/update, same
    * as the old findDuplicateUser_ safeguard in Code.gs. Scoped to a specific
-   * Agency+Campaign: the same person CAN legitimately be registered under a
-   * different Agency+Campaign - only an exact Agency+Campaign+Mobile/NID
+   * Agency+Campaign: the same person/address CAN legitimately be registered under
+   * a different Agency+Campaign - only an exact Agency+Campaign+Mobile/NID/Email
    * repeat is a duplicate. Goes through the check_duplicate_public()
    * SECURITY DEFINER RPC, which for a non-Super-Admin account silently
    * ignores `agencyId`/`campaignId` here and resolves the caller's own scope
    * server-side instead - never trusts the frontend for that role.
    */
-  async checkDuplicate(mobile, nid, agencyId, campaignId, excludeUserCode = null) {
+  async checkDuplicate(mobile, nid, agencyId, campaignId, excludeUserCode = null, email = null) {
     const sb = requireClient();
     const { data } = await run(
       sb.rpc('check_duplicate_public', {
@@ -294,7 +294,8 @@ const dbService = {
         p_nid: nid || null,
         p_agency_id: agencyId || null,
         p_campaign_id: campaignId || null,
-        p_exclude_code: excludeUserCode || null
+        p_exclude_code: excludeUserCode || null,
+        p_email: email || null
       }),
       'Failed to check for duplicates.'
     );
@@ -377,8 +378,9 @@ const dbService = {
     const sb = requireClient();
     const mobile = String(userData.mobile || '').trim();
     const nid = String(userData.nid || '').trim();
+    const email = String(userData.email || '').trim();
 
-    const dup = await this.checkDuplicate(mobile, nid, userData.agencyId, userData.campaignId);
+    const dup = await this.checkDuplicate(mobile, nid, userData.agencyId, userData.campaignId, null, email);
     if (dup.duplicate) throw new Error(dup.message);
 
     // A temporary code for the image path prefix - the final user_code is

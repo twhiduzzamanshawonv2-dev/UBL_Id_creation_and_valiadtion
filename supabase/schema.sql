@@ -334,6 +334,14 @@ create unique index idx_users_nid_agency_campaign     on public.users (agency_id
 -- (the existing regex CHECK constraints on mobile/nid format are untouched -
 -- only the uniqueness SCOPE changed, not format validity.)
 
+-- Same composite-uniqueness rule as mobile/nid above, now for email too - the same
+-- email CAN legitimately be reused under a different Agency+Campaign, but not twice
+-- within the same one. Safe to compare the raw `email` column directly (no lower()
+-- needed): trg_normalize_user_email already lowercases/trims every email before it's
+-- ever written, so two rows can only collide here if they're truly the same address.
+drop index if exists idx_users_email_agency_campaign;
+create unique index idx_users_email_agency_campaign on public.users (agency_id, campaign_id, email);
+
 create index if not exists idx_users_agency_id   on public.users (agency_id);
 create index if not exists idx_users_campaign_id on public.users (campaign_id);
 -- Speeds up the very common "Report To candidates" lookup, now scoped to
@@ -699,10 +707,10 @@ create policy nid_documents_upload on storage.objects
 -- This is defense in depth on top of the `users`/Storage RLS policies above,
 -- which enforce the same scoping as the ultimate backstop either way.
 
--- Returns whether a Mobile/NID is already in use WITHIN THE SAME AGENCY+CAMPAIGN,
--- without exposing any other row data. The same person CAN legitimately be
+-- Returns whether a Mobile/NID/Email is already in use WITHIN THE SAME AGENCY+CAMPAIGN,
+-- without exposing any other row data. The same person (or address) CAN legitimately be
 -- registered under a different Agency+Campaign - only an exact Agency+Campaign+
--- Mobile/NID repeat is a duplicate. `p_exclude_code` lets the admin Edit modal
+-- Mobile/NID/Email repeat is a duplicate. `p_exclude_code` lets the admin Edit modal
 -- reuse this same check while editing an existing user.
 --
 -- Now authenticated-only (anon revoked - there is no more public registration).
@@ -714,13 +722,15 @@ create policy nid_documents_upload on storage.objects
 -- filters). This is defense in depth on top of the RLS policies on `users`
 -- itself, which would reject a mismatched insert/select regardless.
 drop function if exists public.check_duplicate_public(text, text, text);
+drop function if exists public.check_duplicate_public(text, text, uuid, uuid, text);
 
 create or replace function public.check_duplicate_public(
   p_mobile text,
   p_nid text,
   p_agency_id uuid,
   p_campaign_id uuid,
-  p_exclude_code text default null
+  p_exclude_code text default null,
+  p_email text default null
 )
 returns jsonb
 language plpgsql
@@ -730,6 +740,7 @@ as $$
 declare
   clean_mobile text := nullif(trim(p_mobile), '');
   clean_nid text := nullif(trim(p_nid), '');
+  clean_email text := nullif(lower(trim(p_email)), '');
   hit_code text;
   v_caller_role text;
   v_caller_status text;
@@ -779,12 +790,26 @@ begin
     end if;
   end if;
 
+  if clean_email is not null then
+    select user_code into hit_code from public.users
+      where email = clean_email
+        and agency_id = v_agency_id and campaign_id = v_campaign_id
+        and (p_exclude_code is null or user_code <> p_exclude_code)
+      limit 1;
+    if hit_code is not null then
+      return jsonb_build_object(
+        'duplicate', true, 'field', 'Email',
+        'message', format('This user (Email ''%s'') is already registered for this campaign.', clean_email)
+      );
+    end if;
+  end if;
+
   return jsonb_build_object('duplicate', false);
 end;
 $$;
 
-grant execute on function public.check_duplicate_public(text, text, uuid, uuid, text) to authenticated;
-revoke execute on function public.check_duplicate_public(text, text, uuid, uuid, text) from anon;
+grant execute on function public.check_duplicate_public(text, text, uuid, uuid, text, text) to authenticated;
+revoke execute on function public.check_duplicate_public(text, text, uuid, uuid, text, text) from anon;
 
 -- Report To candidates for a given target designation, scoped to a specific
 -- Agency+Campaign (Active, matching designation/role, same Agency+Campaign
@@ -926,6 +951,7 @@ as $$
 declare
   v_mobile text := trim(p->>'mobile');
   v_nid text := trim(p->>'nid');
+  v_email text := trim(p->>'email');
   v_designation text := p->>'designation';
   v_role text := p->>'role';
   v_report_to_name text := nullif(trim(p->>'reportTo'), '');
@@ -944,7 +970,7 @@ begin
     raise exception 'Selected Campaign does not belong to the selected Agency.';
   end if;
 
-  v_dup := public.check_duplicate_public(v_mobile, v_nid, v_agency_id, v_campaign_id, null);
+  v_dup := public.check_duplicate_public(v_mobile, v_nid, v_agency_id, v_campaign_id, null, v_email);
   if (v_dup->>'duplicate')::boolean then
     raise exception '%', v_dup->>'message';
   end if;
