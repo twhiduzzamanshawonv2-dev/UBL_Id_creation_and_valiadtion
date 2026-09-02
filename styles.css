@@ -1334,11 +1334,6 @@ label {
   padding: 0.35rem 0.6rem;
 }
 
-.btn-sm {
-  padding: 0.35rem 0.7rem;
-  font-size: 0.8rem;
-}
-
 .btn-action {
   padding: 0.35rem 0.6rem;
   border-radius: var(--radius-sm);

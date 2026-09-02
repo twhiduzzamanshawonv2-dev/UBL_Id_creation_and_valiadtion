@@ -563,6 +563,14 @@ const dbService = {
     const sb = requireClient();
     let query = sb.from('users').update({ status: newStatus, updated_by: await getCurrentAdminIdentity() });
     query = applyFilters(query, opts);
+    // PostgREST refuses an UPDATE with no WHERE clause at all ("UPDATE requires a
+    // WHERE clause", code 21000) as a safety guard against an accidental full-table
+    // write - applyFilters() adds zero clauses when every filter is left at "All"
+    // (e.g. "Select All Matching Filters" clicked with no filters actually set), so
+    // this always-true condition (id is the PK, never null) satisfies that
+    // requirement without narrowing the result - RLS (users_update_scoped) still
+    // does the real scoping regardless of whether any filter was picked.
+    query = query.not('id', 'is', null);
     await run(query, 'Failed to update status.');
     return newStatus;
   },

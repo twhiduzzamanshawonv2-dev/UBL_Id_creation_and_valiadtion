@@ -129,17 +129,41 @@ create trigger trg_touch_updated_date
   before update on public.users
   for each row execute function public.touch_updated_date();
 
--- Backend/database-level backstop for email normalization (Smart Email
--- Validation Engine - see js/email-validator.js): register_user() already
--- inserts a lowercased/trimmed, typo-corrected email, but this trigger makes
--- lowercase+trim unconditional at the DATABASE level too, so a row can never
--- end up with an uppercase/untrimmed email regardless of write path (a direct
+-- Backend/database-level backstop for email normalization AND format (Smart
+-- Email Validation Engine - see js/email-validator.js): register_user()
+-- already inserts a lowercased/trimmed, typo-corrected, structurally-valid
+-- email, but this trigger makes lowercase+trim+format-check unconditional at
+-- the DATABASE level too, so a row can never end up with an uppercase/
+-- untrimmed/malformed email regardless of write path (a direct
 -- `sb.from('users').insert()`/`.update()` call, a future bulk-import RPC,
--- etc.) - "do not trust the frontend" applied to email casing specifically,
--- matching the same normalize-before-save posture as the RLS/RPC scoping
--- everywhere else in this file. Does NOT reimplement typo/domain correction
--- in SQL - that logic stays client-side in the one shared JS engine (see the
--- file header there) precisely so it's never duplicated.
+-- etc.) - "do not trust the frontend" applied to email specifically, matching
+-- the same posture as the RLS/RPC scoping everywhere else in this file. Does
+-- NOT reimplement typo/domain correction in SQL - that logic stays
+-- client-side in the one shared JS engine (see the file header there)
+-- precisely so it's never duplicated.
+--
+-- Format validation is done HERE, inside the trigger, gated on "email is
+-- actually being inserted or changed" - NOT as a table-level CHECK
+-- constraint. A plain CHECK constraint re-validates the row's CURRENT email
+-- on EVERY update, regardless of which columns changed - an earlier version
+-- of this schema did exactly that (`users_email_check` as a NOT VALID
+-- constraint) and it broke in production: any row whose legacy email
+-- predated the stricter pattern could never be touched again for ANY
+-- reason - a Super Admin's bulk status change spanning 31 users failed
+-- outright because ONE of those rows had an old email that didn't fit, and a
+-- single bad row aborts the whole batch (PostgREST/Postgres UPDATE is
+-- atomic). Gating on "email actually changed" fixes that: untouched legacy
+-- emails are never re-validated by an unrelated write, while a NEW or
+-- EDITED email is still rejected exactly as before if it doesn't parse.
+--
+-- The regex itself mirrors js/email-validator.js's actual rules (local part:
+-- alnum groups separated by one of "._%+-", no leading/trailing/consecutive
+-- separator; domain: alnum labels that may contain internal hyphens, dot-
+-- separated, with a final letters-only TLD of 2+ chars) - the previous
+-- version required the ENTIRE domain to be pure letters (rejecting perfectly
+-- valid, common domains containing digits or hyphens, e.g. "company-1.com"),
+-- which was a mismatch against the JS engine this was meant to copy and made
+-- the false-rejection problem above worse in practice.
 create or replace function public.normalize_user_email()
 returns trigger
 language plpgsql
@@ -148,6 +172,12 @@ begin
   if new.email is not null then
     new.email := lower(trim(new.email));
   end if;
+
+  if (tg_op = 'INSERT' or new.email is distinct from old.email)
+     and new.email !~* '^[a-z0-9]+([._%+-][a-z0-9]+)*@[a-z0-9]+([.-][a-z0-9]+)*\.[a-z]{2,}$' then
+    raise exception 'Invalid email format: %', new.email;
+  end if;
+
   return new;
 end;
 $$;
@@ -157,20 +187,13 @@ create trigger trg_normalize_user_email
   before insert or update on public.users
   for each row execute function public.normalize_user_email();
 
--- Tightened to match the Smart Email Validation Engine's structural rules
--- (js/email-validator.js) - the original check only rejected a missing "@"/
--- missing extension; it did NOT reject a local part with a leading/trailing/
--- consecutive dot (e.g. "rahim..ahmed@gmail.com"), which the JS engine does
--- reject. ALTER (not part of the original inline `create table` check) so
--- this stays idempotent on an already-existing table. Added NOT VALID so
--- re-running this script on a live database can never fail/abort because of
--- some already-existing row that predates this stricter rule - it only
--- applies to every NEW insert/update from here on; run `alter table
--- public.users validate constraint users_email_check` manually later, once
--- any legacy rows have been cleaned up, if full retroactive enforcement is wanted.
+-- Drop the old table-level CHECK (both the very first inline version from the
+-- original `create table` - domain letters-only, ~[^\s@]+@[A-Za-z]+... - and
+-- the later tightened-but-still-too-strict ALTER version some databases may
+-- already have) now that the same format rule lives in the trigger above,
+-- scoped to actual email changes only. Safe to re-run - dropping an
+-- already-absent constraint is a no-op.
 alter table public.users drop constraint if exists users_email_check;
-alter table public.users add constraint users_email_check
-  check (email ~* '^[a-z0-9]+([._%+-][a-z0-9]+)*@[a-z]+(\.[a-z]+)+$') not valid;
 
 -- Widen the status enum from the original binary Active/Inactive to the
 -- 4-stage workflow (Created/Submitted/Processing/Inactive). Only DROP the old
