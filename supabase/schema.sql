@@ -297,26 +297,44 @@ create trigger trg_enforce_user_status_change
   before update on public.users
   for each row execute function public.enforce_user_status_change();
 
--- Agency Admin's "edit window": an agency_admin may edit a user's info fields
--- (name/mobile/email/gender/parents'/dob/division-district-upazila-thana/
--- designation/role/report_to_id/nid/photos) ONLY while that user's status is
+-- Agency Admin's "edit window": an agency_admin may edit a user's general info
+-- fields (name/mobile/email/gender/parents'/dob/division-district-upazila-
+-- thana/designation/role/report_to_id/nid) ONLY while that user's status is
 -- still 'Submitted' - once a Super Admin has moved it on to Processing/
 -- Created/Inactive, an agency_admin can no longer touch it (the app also
 -- disables the Edit button client-side for this same reason - see
 -- js/app.js's isSuperAdminViewer/canEdit logic in renderUserTable() - this
 -- trigger is the real backstop behind that, same "do not trust the frontend"
--- posture as trg_enforce_user_status_change above). Super Admin is exempt
--- entirely (can always edit, regardless of status) - status itself is
--- excluded from this check (that's trg_enforce_user_status_change's job, not
--- this trigger's), and updated_by/updated_date are excluded since the app
--- (and trg_touch_updated_date) always touch those on every save regardless
--- of what else changed.
+-- posture as trg_enforce_user_status_change above).
+--
+-- The uploaded documents/photo (nid_front_url/nid_back_url/user_photo_url)
+-- are a SEPARATE, stricter rule: only Super Admin may ever change these,
+-- REGARDLESS of status - an agency_admin never gets a re-upload control for
+-- them in the UI (see index.html's Edit modal - only Super Admin's fields
+-- include the file inputs), and this is the backstop behind that.
+--
+-- Super Admin is exempt from both rules entirely (can always edit everything,
+-- regardless of status) - status itself is excluded from this check (that's
+-- trg_enforce_user_status_change's job, not this trigger's), and
+-- updated_by/updated_date are excluded since the app (and
+-- trg_touch_updated_date) always touch those on every save regardless of
+-- what else changed.
 create or replace function public.enforce_agency_admin_edit_window()
 returns trigger
 language plpgsql
 as $$
 begin
-  if public.is_super_admin() or old.status = 'Submitted' then
+  if public.is_super_admin() then
+    return new;
+  end if;
+
+  if new.nid_front_url is distinct from old.nid_front_url
+     or new.nid_back_url is distinct from old.nid_back_url
+     or new.user_photo_url is distinct from old.user_photo_url then
+    raise exception 'Only Super Admin can replace a user''s NID documents or photo.';
+  end if;
+
+  if old.status = 'Submitted' then
     return new;
   end if;
 
@@ -334,10 +352,7 @@ begin
      or new.designation is distinct from old.designation
      or new.role is distinct from old.role
      or new.report_to_id is distinct from old.report_to_id
-     or new.nid is distinct from old.nid
-     or new.nid_front_url is distinct from old.nid_front_url
-     or new.nid_back_url is distinct from old.nid_back_url
-     or new.user_photo_url is distinct from old.user_photo_url then
+     or new.nid is distinct from old.nid then
     raise exception 'This user can no longer be edited - only Super Admin can edit a user once its status has moved past Submitted.';
   end if;
 

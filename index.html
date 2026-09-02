@@ -1736,6 +1736,39 @@
             <span class="field-hint">Numeric only (10, 13, or 17 digits)</span>
             <span class="error-message" id="editNidError"></span>
           </div>
+
+          <!-- Documents & Photo re-upload - Super-Admin-only, always optional (leaving a
+               file input empty keeps that user's existing document/photo unchanged). See
+               js/app.js openUserEditModal()/btnSaveEdit for the upload + save wiring, and
+               trg_enforce_agency_admin_edit_window in supabase/schema.sql for why an
+               Agency Admin could never submit these even if this markup were exposed to them. -->
+          <div class="field-group mb-3">
+            <label>User Photo</label>
+            <div class="edit-doc-thumb-row">
+              <img id="editUserPhotoThumb" class="edit-doc-thumb" alt="Current User Photo" />
+              <input type="file" id="editUserPhotoFile" accept="image/*" class="form-control" />
+            </div>
+            <span class="field-hint">Leave empty to keep the current photo</span>
+            <span class="error-message" id="editUserPhotoFileError"></span>
+          </div>
+          <div class="field-group mb-3">
+            <label>NID Front Side Image</label>
+            <div class="edit-doc-thumb-row">
+              <img id="editNidFrontThumb" class="edit-doc-thumb" alt="Current NID Front" />
+              <input type="file" id="editNidFrontFile" accept="image/*" class="form-control" />
+            </div>
+            <span class="field-hint">Leave empty to keep the current image</span>
+            <span class="error-message" id="editNidFrontFileError"></span>
+          </div>
+          <div class="field-group mb-3">
+            <label>NID Back Side Image</label>
+            <div class="edit-doc-thumb-row">
+              <img id="editNidBackThumb" class="edit-doc-thumb" alt="Current NID Back" />
+              <input type="file" id="editNidBackFile" accept="image/*" class="form-control" />
+            </div>
+            <span class="field-hint">Leave empty to keep the current image</span>
+            <span class="error-message" id="editNidBackFileError"></span>
+          </div>
         </div>
       </div>
       <div class="modal-footer">

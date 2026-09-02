@@ -457,6 +457,12 @@ const dbService = {
     if (updatedFields.motherName !== undefined) patch.mother_name = updatedFields.motherName;
     if (updatedFields.dob !== undefined) patch.dob = updatedFields.dob;
     if (updatedFields.nid !== undefined) patch.nid = String(updatedFields.nid).trim();
+    // Super-Admin-only re-uploads (paths already uploaded by the caller via uploadImage() -
+    // see js/app.js's Edit modal). Enforced server-side too by
+    // trg_enforce_agency_admin_edit_window in supabase/schema.sql regardless of what sends this.
+    if (updatedFields.userPhotoUrl !== undefined) patch.user_photo_url = updatedFields.userPhotoUrl;
+    if (updatedFields.nidFrontUrl !== undefined) patch.nid_front_url = updatedFields.nidFrontUrl;
+    if (updatedFields.nidBackUrl !== undefined) patch.nid_back_url = updatedFields.nidBackUrl;
 
     // Single authoritative duplicate check covering whichever of Mobile/NID/Email are
     // actually being changed here - same check_duplicate_public() RPC used everywhere else,

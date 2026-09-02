@@ -22,6 +22,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   let editingUserAgencyId = null;
   let editingUserCampaignId = null;
 
+  // Pending replacement Files for the Edit modal's Super-Admin-only document/photo
+  // re-upload (see index.html's #editNidFieldGroup) - a null entry means "keep the
+  // existing one", separate from activeImageFiles above (the Create form's own state)
+  // so the two forms, if both ever open in the same session, never collide.
+  let editImageFiles = { userPhoto: null, nidFront: null, nidBack: null };
+
   // Auth state (see initAuth() in Section 0 below). Admin Dashboard / System Settings
   // require a logged-in Supabase Auth session; User Registration / Excel Validator stay
   // public. `pendingViewAfterLogin` remembers which admin tab the visitor actually asked
@@ -2576,7 +2582,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   async function openUserEditModal(id) {
-    const u = storage.getUserById(id);
+    // Super Admin needs resolved (signed) NID Front/Back + Photo URLs to show the CURRENT
+    // document/photo thumbnails in the re-upload section below - an Agency Admin never sees
+    // that section, so it can skip the extra signed-URL round trip and use the already-cached
+    // table row instead (same data getUserDetailWithImages() would return, minus those 2 URLs).
+    const u = storage.isSuperAdmin() ? await storage.getUserDetailWithImages(id) : storage.getUserById(id);
     if (!u) return;
 
     editingUserId = id;
@@ -2610,6 +2620,25 @@ document.addEventListener('DOMContentLoaded', async () => {
       document.getElementById('editNid').value = u.nid || '';
       const nidErrorEl = document.getElementById('editNidError');
       if (nidErrorEl) nidErrorEl.textContent = '';
+
+      // Documents & Photo re-upload - reset to "no pending replacement" and show the
+      // user's CURRENT image as the thumbnail (see the resolved `u` fetched above).
+      editImageFiles = { userPhoto: null, nidFront: null, nidBack: null };
+      [
+        ['editUserPhotoThumb', 'editUserPhotoFile', 'editUserPhotoFileError', u.userPhoto],
+        ['editNidFrontThumb', 'editNidFrontFile', 'editNidFrontFileError', u.nidFront],
+        ['editNidBackThumb', 'editNidBackFile', 'editNidBackFileError', u.nidBack]
+      ].forEach(([thumbId, fileId, errorId, currentUrl]) => {
+        const thumbEl = document.getElementById(thumbId);
+        const fileEl = document.getElementById(fileId);
+        const errorEl = document.getElementById(errorId);
+        if (thumbEl) {
+          if (currentUrl) thumbEl.src = currentUrl;
+          else thumbEl.removeAttribute('src');
+        }
+        if (fileEl) fileEl.value = '';
+        if (errorEl) errorEl.textContent = '';
+      });
     }
 
     // Designations
@@ -3810,6 +3839,42 @@ document.addEventListener('DOMContentLoaded', async () => {
       });
     }
 
+    // Documents & Photo re-upload (Super-Admin-only, see index.html's #editNidFieldGroup) -
+    // picking a file just stages it in editImageFiles + swaps the thumbnail to a local
+    // preview; the actual Storage upload only happens on Save (see btnSaveEdit below), so
+    // choosing then closing the modal without saving never uploads anything.
+    [
+      ['editUserPhotoFile', 'editUserPhotoThumb', 'editUserPhotoFileError', 'userPhoto'],
+      ['editNidFrontFile', 'editNidFrontThumb', 'editNidFrontFileError', 'nidFront'],
+      ['editNidBackFile', 'editNidBackThumb', 'editNidBackFileError', 'nidBack']
+    ].forEach(([fileId, thumbId, errorId, key]) => {
+      const fileEl = document.getElementById(fileId);
+      const thumbEl = document.getElementById(thumbId);
+      const errorEl = document.getElementById(errorId);
+      if (!fileEl) return;
+
+      fileEl.addEventListener('change', () => {
+        const file = fileEl.files[0];
+        if (errorEl) errorEl.textContent = '';
+
+        if (!file) {
+          editImageFiles[key] = null;
+          return;
+        }
+
+        const validation = validateImageFile(file, 5);
+        if (!validation.valid) {
+          if (errorEl) errorEl.textContent = validation.message;
+          fileEl.value = '';
+          editImageFiles[key] = null;
+          return;
+        }
+
+        editImageFiles[key] = file;
+        if (thumbEl) thumbEl.src = URL.createObjectURL(file);
+      });
+    });
+
     if (btnSaveEdit) {
       btnSaveEdit.addEventListener('click', async () => {
         if (!editingUserId || btnSaveEdit.disabled) return;
@@ -3920,6 +3985,29 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         btnSaveEdit.disabled = true;
         try {
+          // Documents & Photo re-upload (Super-Admin-only) - only actually uploads a file the
+          // admin just picked (editImageFiles[key] is null for anything left untouched, so
+          // that user's existing document/photo is simply never included in the patch below).
+          if (editingNidField) {
+            const [userPhotoUrl, nidFrontUrl, nidBackUrl] = await Promise.all([
+              editImageFiles.userPhoto
+                ? dbService.uploadImage('user-photos', editingUserId, 'photo', editImageFiles.userPhoto)
+                : Promise.resolve(undefined),
+              editImageFiles.nidFront
+                ? dbService.uploadImage('nid-documents', editingUserId, 'nidFront', editImageFiles.nidFront)
+                : Promise.resolve(undefined),
+              editImageFiles.nidBack
+                ? dbService.uploadImage('nid-documents', editingUserId, 'nidBack', editImageFiles.nidBack)
+                : Promise.resolve(undefined)
+            ]);
+            extraFields = {
+              ...extraFields,
+              ...(userPhotoUrl !== undefined ? { userPhotoUrl } : {}),
+              ...(nidFrontUrl !== undefined ? { nidFrontUrl } : {}),
+              ...(nidBackUrl !== undefined ? { nidBackUrl } : {})
+            };
+          }
+
           await storage.updateUser(editingUserId, {
             name: updatedName,
             mobile: updatedMobile,
