@@ -200,7 +200,7 @@ async function main() {
         nid_front_url: nidFrontPath,
         nid_back_url: nidBackPath,
         user_photo_url: userPhotoUrl,
-        status: u.status === 'Inactive' ? 'Inactive' : 'Active',
+        status: u.status === 'Inactive' ? 'Inactive' : 'Submitted',
         created_by: u.createdBy || 'Migration',
         created_date: u.createdDate || undefined,
         updated_by: u.updatedBy || 'Migration',

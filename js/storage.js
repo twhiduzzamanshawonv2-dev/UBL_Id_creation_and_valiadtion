@@ -118,11 +118,22 @@ class StorageManager {
     return savedUser;
   }
 
-  async toggleUserStatus(id) {
-    const newStatus = await dbService.toggleUserStatus(id);
+  async setUserStatus(id, newStatus) {
+    await dbService.setUserStatus(id, newStatus);
     const idx = this.users.findIndex(u => u.id === id);
     if (idx !== -1) this.users[idx].status = newStatus;
     return this.getUserById(id) || { id, status: newStatus };
+  }
+
+  // Explicit checkbox-picked user codes - see db-service.js bulkSetUserStatus() doc comment.
+  async bulkSetUserStatus(userCodes, newStatus) {
+    return dbService.bulkSetUserStatus(userCodes, newStatus);
+  }
+
+  // Every user matching `filters` (same shape as fetchUsers()'s `filters`) - not just the
+  // currently-loaded page. See db-service.js bulkSetUserStatusByFilter() doc comment.
+  async bulkSetUserStatusByFilter(filters, newStatus) {
+    return dbService.bulkSetUserStatusByFilter(filters, newStatus);
   }
 
   getRoles() {

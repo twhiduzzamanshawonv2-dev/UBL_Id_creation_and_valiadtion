@@ -66,7 +66,14 @@ create table if not exists public.users (
   nid_back_url     text,
   user_photo_url   text,
 
-  status           text not null default 'Active' check (status in ('Active', 'Inactive')),
+  -- Workflow status, replacing the old binary Active/Inactive with 4 stages:
+  -- Created -> Submitted (default on insert) -> Processing -> ... , with
+  -- Inactive as the separate "deactivated" state. Only Super Admin may change
+  -- this (enforced below by trg_enforce_user_status_change) - everywhere else
+  -- that used to mean "usable/not deactivated" now checks status <> 'Inactive'
+  -- rather than status = 'Active' (see validate_report_to(),
+  -- get_report_to_candidates(), _insert_registered_user()).
+  status           text not null default 'Submitted' check (status in ('Created', 'Submitted', 'Processing', 'Inactive')),
 
   created_by       text,
   created_date     timestamptz not null default now(),
@@ -165,11 +172,31 @@ alter table public.users drop constraint if exists users_email_check;
 alter table public.users add constraint users_email_check
   check (email ~* '^[a-z0-9]+([._%+-][a-z0-9]+)*@[a-z]+(\.[a-z]+)+$') not valid;
 
+-- Widen the status enum from the original binary Active/Inactive to the
+-- 4-stage workflow (Created/Submitted/Processing/Inactive). Only DROP the old
+-- CHECK constraint here (so the column briefly accepts any text) - the data
+-- migration (existing 'Active' rows -> 'Submitted') and re-adding the tighter
+-- constraint happen further below, AFTER validate_report_to()/
+-- trg_validate_report_to are redefined with the new <> 'Inactive' logic. On a
+-- RE-RUN of this script, the OLD trg_validate_report_to (still checking
+-- `status = 'Active'`) is what's actually attached to the table at this point
+-- - running the bulk status migration here, before that trigger is replaced,
+-- would validate each updated row's Report To target using the OLD check,
+-- and since row processing order within one UPDATE isn't guaranteed, a
+-- Supervisor/BP whose FC/Supervisor target got migrated to 'Submitted' first
+-- would then fail "target_row.status <> 'Active'" (a real bug hit in
+-- production - see conversation history). Default also moves to 'Submitted'
+-- so new inserts start there instead of the old 'Active'.
+alter table public.users drop constraint if exists users_status_check;
+alter table public.users alter column status set default 'Submitted';
+
 -- Report To hierarchy check, enforced at the database level as a second gate
 -- behind the app's own validation (mirrors validateDesignationRoleReportTo_):
 --   - FC must have report_to_id = NULL.
---   - BP's report_to_id must point to an Active Supervisor.
---   - Supervisor's report_to_id must point to an Active FC.
+--   - BP's report_to_id must point to a non-Inactive Supervisor.
+--   - Supervisor's report_to_id must point to a non-Inactive FC.
+-- "Usable" now means anything except Inactive (Created/Submitted/Processing
+-- all qualify) - only Inactive (deactivated) users are excluded.
 create or replace function public.validate_report_to()
 returns trigger
 language plpgsql
@@ -193,7 +220,7 @@ begin
 
   select * into target_row from public.users where id = new.report_to_id;
   if not found
-     or target_row.status <> 'Active'
+     or target_row.status = 'Inactive'
      or target_row.designation <> target_designation
      or target_row.role <> target_designation
      or target_row.agency_id <> new.agency_id
@@ -209,6 +236,43 @@ drop trigger if exists trg_validate_report_to on public.users;
 create trigger trg_validate_report_to
   before insert or update on public.users
   for each row execute function public.validate_report_to();
+
+-- Now safe to migrate existing 'Active' rows to 'Submitted' and re-tighten
+-- the status CHECK constraint: trg_validate_report_to above is already the
+-- NEW version (status <> 'Inactive'), which is indifferent to 'Active' vs
+-- 'Submitted', so this bulk UPDATE can no longer fail depending on row
+-- processing order (see the long comment on the constraint DROP earlier).
+-- Safe to re-run (no-op once no row is left with the old value).
+update public.users set status = 'Submitted' where status = 'Active';
+alter table public.users add constraint users_status_check
+  check (status in ('Created', 'Submitted', 'Processing', 'Inactive'));
+
+-- Status changes (Created/Submitted/Processing/Inactive) are Super-Admin-only,
+-- enforced HERE rather than only in the app/UI so a hand-crafted
+-- `sb.from('users').update({status: ...})` call from a non-Super-Admin
+-- session is rejected regardless of what the frontend hides or shows -
+-- the same "do not trust the frontend" posture as every RLS policy/RPC
+-- in this file. References public.is_super_admin(), defined further below
+-- in this script - fine at CREATE time since plpgsql only resolves the call
+-- at EXECUTE time, by which point the whole script (and that function) has
+-- already run. Skipped entirely when status is unchanged so a normal field
+-- edit by an agency_admin (name/mobile/etc.) is never blocked by this check.
+create or replace function public.enforce_user_status_change()
+returns trigger
+language plpgsql
+as $$
+begin
+  if new.status is distinct from old.status and not public.is_super_admin() then
+    raise exception 'Only Super Admin can change a user''s status.';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_enforce_user_status_change on public.users;
+create trigger trg_enforce_user_status_change
+  before update on public.users
+  for each row execute function public.enforce_user_status_change();
 
 -- ----------------------------------------------------------------------------
 -- Agencies & Campaigns (master data) - a user submission is now scoped to one
@@ -555,7 +619,7 @@ create index if not exists idx_users_division_gin    on public.users using gin (
 create index if not exists idx_users_district_gin    on public.users using gin (district);
 create index if not exists idx_users_upazila_gin     on public.users using gin (upazila);
 create index if not exists idx_users_thana_gin       on public.users using gin (thana);
--- Speeds up the very common "Report To" lookup: WHERE designation = X AND status = 'Active'.
+-- Speeds up the very common "Report To" lookup: WHERE designation = X AND status <> 'Inactive'.
 create index if not exists idx_users_designation_status on public.users (designation, status);
 
 -- ----------------------------------------------------------------------------
@@ -858,7 +922,7 @@ begin
   return query
     select u.id, u.user_code, u.name
     from public.users u
-    where u.status = 'Active'
+    where u.status <> 'Inactive'
       and u.designation = p_designation
       and u.role = p_designation
       and u.agency_id = v_agency_id
@@ -989,7 +1053,7 @@ begin
       where name = v_report_to_name
         and designation = v_target_designation
         and role = v_target_designation
-        and status = 'Active'
+        and status <> 'Inactive'
         and agency_id = v_agency_id
         and campaign_id = v_campaign_id
       limit 1;
@@ -1014,7 +1078,7 @@ begin
     coalesce((select array_agg(x) from jsonb_array_elements_text(coalesce(p->'thana', '[]'::jsonb)) x), '{}'),
     v_designation, v_role, v_report_to_id,
     v_nid, p->>'nidFrontUrl', p->>'nidBackUrl', p->>'userPhotoUrl',
-    'Active', v_agency_id, v_campaign_id, v_actor, v_actor
+    'Submitted', v_agency_id, v_campaign_id, v_actor, v_actor
   )
   returning * into v_row;
 

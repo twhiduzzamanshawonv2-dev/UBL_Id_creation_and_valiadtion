@@ -22,6 +22,9 @@ const USERS_VIEW = 'users_with_report_to';
 
 const NID_SIGNED_URL_TTL_SECONDS = 60 * 60; // 1 hour - short-lived link to a private document
 
+// Must mirror the `status` CHECK constraint on public.users in supabase/schema.sql.
+const USER_STATUSES = ['Created', 'Submitted', 'Processing', 'Inactive'];
+
 function dbRowToUser(row) {
   if (!row) return null;
   return {
@@ -499,17 +502,68 @@ const dbService = {
     return resolveUserPhoto(dbRowToUser({ ...data, report_to_name: updatedFields.reportTo || null }));
   },
 
-  async toggleUserStatus(userCode) {
+  /**
+   * Sets a user's status to any of the 4 workflow stages. Super-Admin-only -
+   * enforced both here (fail fast, friendlier error) and, as the real
+   * backstop, by trg_enforce_user_status_change in supabase/schema.sql (so a
+   * hand-crafted table update from a non-Super-Admin session is rejected
+   * regardless of what this client-side check does).
+   */
+  async setUserStatus(userCode, newStatus) {
+    if (!USER_STATUSES.includes(newStatus)) {
+      throw new Error(`Invalid status: ${newStatus}`);
+    }
     const sb = requireClient();
-    const { data: current } = await run(
-      sb.from('users').select('status').eq('user_code', userCode).single(),
-      'User not found.'
-    );
-    const newStatus = current.status === 'Active' ? 'Inactive' : 'Active';
     await run(
       sb.from('users').update({ status: newStatus, updated_by: await getCurrentAdminIdentity() }).eq('user_code', userCode),
       'Failed to update status.'
     );
+    return newStatus;
+  },
+
+  /**
+   * Sets status on an explicit list of users (checkbox-picked rows) in one round
+   * trip. Same Super-Admin enforcement as setUserStatus() above (client-side fail
+   * fast + trg_enforce_user_status_change as the real backstop). All-or-nothing:
+   * PostgREST runs the `.in()` update as a single statement, so a failure (e.g. a
+   * stale Report To check) rolls back the whole batch rather than partially
+   * applying - the right behavior for "just flip a status field", unlike
+   * import_users_batch()'s per-row reporting for a very different (multi-field
+   * insert) operation.
+   */
+  async bulkSetUserStatus(userCodes, newStatus) {
+    if (!USER_STATUSES.includes(newStatus)) {
+      throw new Error(`Invalid status: ${newStatus}`);
+    }
+    if (!Array.isArray(userCodes) || userCodes.length === 0) {
+      throw new Error('No users selected.');
+    }
+    const sb = requireClient();
+    await run(
+      sb.from('users').update({ status: newStatus, updated_by: await getCurrentAdminIdentity() }).in('user_code', userCodes),
+      'Failed to update status.'
+    );
+    return newStatus;
+  },
+
+  /**
+   * Sets status on EVERY user matching the current Users-screen filters (Agency/
+   * Campaign/Division/.../From-To Date/Search/Status) - not just the rows loaded
+   * on the current page. Reuses the exact same applyFilters() WHERE-clause builder
+   * as getUsers()/getAllUsersForExport() (further below in this file), so "Select
+   * All N Matching Filters" always affects precisely the N the count badge showed,
+   * regardless of how many pages that spans. This is what makes a date-range bulk
+   * change (e.g. "everyone created Aug 1-15") practical - checkbox selection alone
+   * only reaches whatever page is currently rendered.
+   */
+  async bulkSetUserStatusByFilter(opts, newStatus) {
+    if (!USER_STATUSES.includes(newStatus)) {
+      throw new Error(`Invalid status: ${newStatus}`);
+    }
+    const sb = requireClient();
+    let query = sb.from('users').update({ status: newStatus, updated_by: await getCurrentAdminIdentity() });
+    query = applyFilters(query, opts);
+    await run(query, 'Failed to update status.');
     return newStatus;
   },
 
@@ -807,4 +861,5 @@ function applyFilters(query, opts) {
 
 if (typeof window !== 'undefined') {
   window.dbService = dbService;
+  window.USER_STATUSES = USER_STATUSES;
 }

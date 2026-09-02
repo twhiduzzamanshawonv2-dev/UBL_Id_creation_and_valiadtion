@@ -45,6 +45,22 @@ document.addEventListener('DOMContentLoaded', async () => {
     return toLocationArray(val).join(', ');
   }
 
+  // Shared status -> badge markup, kept in sync with the USER_STATUSES enum
+  // (js/db-service.js, mirroring the CHECK constraint in supabase/schema.sql).
+  // 'Active' is included as a fallback for any legacy row a script hasn't migrated yet.
+  const STATUS_BADGE_CLASS = {
+    Created: 'badge-created',
+    Submitted: 'badge-submitted',
+    Processing: 'badge-processing',
+    Active: 'badge-active',
+    Inactive: 'badge-inactive'
+  };
+
+  function userStatusBadge(status) {
+    const cls = STATUS_BADGE_CLASS[status] || 'badge-inactive';
+    return `<span class="badge ${cls}">${status}</span>`;
+  }
+
   // Required Field Messages (shared between inline "as you go" checks and full submit-time validation)
   const REQUIRED_FIELD_MESSAGES = {
     agency: 'Please select Agency.',
@@ -141,6 +157,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   initImageUploads();
   initFormSubmissionAndPreview();
   initAdminDashboard();
+  initBulkActionsBar();
   initDashboardFilterListeners();
   initAgenciesPanel();
   initCampaignsPanel();
@@ -1804,13 +1821,20 @@ document.addEventListener('DOMContentLoaded', async () => {
     };
   }
 
-  // Re-queries Supabase (page 1, current filters) and re-renders - the single entry
-  // point every filter control/search input/pagination click funnels through.
-  async function reloadUserTable(page = 1) {
+  // Re-queries Supabase (current filters) and re-renders - the single entry point
+  // every filter control/search input/pagination click funnels through.
+  // `resetSelection` defaults to true (a FILTER change invalidates any "N selected"
+  // count, since the set of matching rows just changed) - pure pagination clicks
+  // (Prev/Next/page-number buttons) pass false so a manual multi-page bulk-status
+  // selection survives paging through the results, as it should: the admin is
+  // still picking from the SAME filtered set, just looking at a different page of it.
+  async function reloadUserTable(page = 1, resetSelection = true) {
     const tbody = document.getElementById('adminUserTableBody');
     if (tbody) {
-      tbody.innerHTML = `<tr><td colspan="12" class="text-center py-4 text-muted">Loading...</td></tr>`;
+      const colCount = storage.isSuperAdmin() ? 13 : 12;
+      tbody.innerHTML = `<tr><td colspan="${colCount}" class="text-center py-4 text-muted">Loading...</td></tr>`;
     }
+    if (resetSelection) clearBulkSelection();
     await refreshUsersFromSheet(getAdminFilterValues(), page);
     renderUserTable();
   }
@@ -1857,8 +1881,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     const btnPrevPage = document.getElementById('btnPrevPage');
     const btnNextPage = document.getElementById('btnNextPage');
-    if (btnPrevPage) btnPrevPage.addEventListener('click', () => reloadUserTable(storage.page - 1));
-    if (btnNextPage) btnNextPage.addEventListener('click', () => reloadUserTable(storage.page + 1));
+    if (btnPrevPage) btnPrevPage.addEventListener('click', () => reloadUserTable(storage.page - 1, false));
+    if (btnNextPage) btnNextPage.addEventListener('click', () => reloadUserTable(storage.page + 1, false));
 
     const btnRefreshUsers = document.getElementById('btnRefreshUsers');
     if (btnRefreshUsers) {
@@ -2114,6 +2138,117 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
+  /* ==========================================================================
+     8a. Bulk Status Change (Super-Admin-only) - two selection modes:
+       - "manual": bulkSelectedCodes holds specific user_codes, picked via row/
+         page checkboxes. Persists across pagination (a Set, not tied to page)
+         so an admin can page through and pick a handful from different pages.
+       - "all matching": bulkSelectAllMatching=true means EVERY row matching the
+         current filters (e.g. a From/To Date range), not just what's loaded on
+         screen. Applying in this mode calls storage.bulkSetUserStatusByFilter()
+         with the current filter values, so it isn't limited by pagination.
+     Any manual checkbox interaction exits "all matching" mode (falls back to
+     whatever the checkboxes now show) - the two modes are mutually exclusive.
+     ========================================================================== */
+  let bulkSelectedCodes = new Set();
+  let bulkSelectAllMatching = false;
+
+  function clearBulkSelection() {
+    bulkSelectedCodes.clear();
+    bulkSelectAllMatching = false;
+    updateBulkActionsBar();
+  }
+
+  function updateBulkActionsBar() {
+    const bar = document.getElementById('bulkActionsBar');
+    const countElem = document.getElementById('bulkActionsCount');
+    const totalElem = document.getElementById('bulkActionsTotal');
+    if (!bar) return;
+
+    const isSuperAdminViewer = storage.isSuperAdmin();
+    const selectedCount = bulkSelectAllMatching ? storage.total : bulkSelectedCodes.size;
+
+    if (totalElem) totalElem.textContent = storage.total;
+    if (countElem) {
+      countElem.textContent = bulkSelectAllMatching
+        ? `All ${storage.total} matching selected`
+        : `${selectedCount} selected`;
+    }
+    bar.style.display = (isSuperAdminViewer && selectedCount > 0) ? 'flex' : 'none';
+
+    // "Select All N Matching Filters" is only meaningful once more rows match than
+    // are already individually selected (e.g. no point offering it once every row
+    // on a single-page result set is already checked).
+    const btnSelectAllMatching = document.getElementById('btnSelectAllMatching');
+    if (btnSelectAllMatching) {
+      btnSelectAllMatching.style.display = (!bulkSelectAllMatching && storage.total > bulkSelectedCodes.size) ? '' : 'none';
+    }
+  }
+
+  function initBulkActionsBar() {
+    const selectAllPageCheckbox = document.getElementById('selectAllPageCheckbox');
+    const btnSelectAllMatching = document.getElementById('btnSelectAllMatching');
+    const btnApplyBulkStatus = document.getElementById('btnApplyBulkStatus');
+    const btnClearBulkSelection = document.getElementById('btnClearBulkSelection');
+
+    if (selectAllPageCheckbox) {
+      selectAllPageCheckbox.addEventListener('change', () => {
+        bulkSelectAllMatching = false;
+        document.querySelectorAll('#adminUserTableBody .row-select-checkbox').forEach(cb => {
+          const id = cb.getAttribute('data-id');
+          if (selectAllPageCheckbox.checked) bulkSelectedCodes.add(id);
+          else bulkSelectedCodes.delete(id);
+          cb.checked = selectAllPageCheckbox.checked;
+        });
+        updateBulkActionsBar();
+      });
+    }
+
+    if (btnSelectAllMatching) {
+      btnSelectAllMatching.addEventListener('click', () => {
+        bulkSelectAllMatching = true;
+        bulkSelectedCodes.clear();
+        renderUserTable();
+      });
+    }
+
+    if (btnClearBulkSelection) {
+      btnClearBulkSelection.addEventListener('click', () => {
+        clearBulkSelection();
+        renderUserTable();
+      });
+    }
+
+    if (btnApplyBulkStatus) {
+      btnApplyBulkStatus.addEventListener('click', () => {
+        const newStatus = document.getElementById('bulkStatusSelect')?.value;
+        if (!newStatus) return;
+        const count = bulkSelectAllMatching ? storage.total : bulkSelectedCodes.size;
+        if (count === 0) return;
+
+        const scopeText = bulkSelectAllMatching
+          ? `all ${count} users matching the current filters`
+          : `${count} selected user(s)`;
+
+        showConfirmModal({
+          title: 'Confirm Status Change',
+          message: `Set status to "${newStatus}" for ${scopeText}? This cannot be undone from here.`,
+          confirmLabel: `✅ Set to ${newStatus}`,
+          onConfirm: async () => {
+            if (bulkSelectAllMatching) {
+              await storage.bulkSetUserStatusByFilter(getAdminFilterValues(), newStatus);
+            } else {
+              await storage.bulkSetUserStatus(Array.from(bulkSelectedCodes), newStatus);
+            }
+            clearBulkSelection();
+            await reloadUserTable(storage.page);
+            showToast(`Status updated for ${scopeText}.`, 'success');
+          }
+        });
+      });
+    }
+  }
+
   // Renders whatever page of results is currently cached in storage.users (already
   // filtered/paginated server-side by the last reloadUserTable() call) plus the
   // pagination bar. Does NOT itself query Supabase - see reloadUserTable() for that.
@@ -2136,6 +2271,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (!tbody) return;
 
     const users = storage.getUsers();
+    const isSuperAdminViewer = storage.isSuperAdmin();
+
+    // The checkbox column only exists for Super Admin (bulk status changes) -
+    // toggle the header cell here too so it stays in sync with the row cells
+    // rendered below, and empty/loading rows below can size their colspan to match.
+    const selectAllTh = document.getElementById('usersSelectAllTh');
+    if (selectAllTh) selectAllTh.style.display = isSuperAdminViewer ? '' : 'none';
+    const colCount = isSuperAdminViewer ? 13 : 12;
 
     if (counterElem) {
       counterElem.textContent = `${storage.total} User(s) Found`;
@@ -2144,22 +2287,35 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (users.length === 0) {
       tbody.innerHTML = `
         <tr>
-          <td colspan="12" class="text-center py-4 text-muted">
+          <td colspan="${colCount}" class="text-center py-4 text-muted">
             ${emptyUserListMessage()}
           </td>
         </tr>
       `;
       renderPaginationBar();
+      updateBulkActionsBar();
       return;
     }
 
     tbody.innerHTML = users.map(u => {
-      const statusBadge = u.status === 'Active'
-        ? `<span class="badge badge-active">Active</span>`
-        : `<span class="badge badge-inactive">Inactive</span>`;
+      // Only Super Admin can change status - everyone else sees a plain read-only badge
+      // (enforced server-side too, see trg_enforce_user_status_change in supabase/schema.sql).
+      const statusCell = isSuperAdminViewer
+        ? `<select class="status-select" data-id="${u.id}" title="Change Status">
+            ${window.USER_STATUSES.map(s => `<option value="${s}" ${s === u.status ? 'selected' : ''}>${s}</option>`).join('')}
+          </select>`
+        : userStatusBadge(u.status);
+
+      // Bulk-selection checkbox (Super Admin only) - checked state reflects either
+      // manual per-user selection, or "all matching filters" mode (see bulkSelectAllMatching).
+      const isChecked = bulkSelectAllMatching || bulkSelectedCodes.has(u.id);
+      const selectCell = isSuperAdminViewer
+        ? `<td><input type="checkbox" class="row-select-checkbox" data-id="${u.id}" ${isChecked ? 'checked' : ''} /></td>`
+        : '';
 
       return `
         <tr>
+          ${selectCell}
           <td><strong>${u.id}</strong></td>
           <td><small>${u.agencyName || '—'}</small></td>
           <td><small>${u.campaignName || '—'}</small></td>
@@ -2177,15 +2333,12 @@ document.addEventListener('DOMContentLoaded', async () => {
           <td><span class="badge badge-role">${u.role}</span></td>
           <td><small class="location-cell" title="${toLocationDisplay(u.thana)}, ${toLocationDisplay(u.district)}, ${toLocationDisplay(u.division)}">${toLocationDisplay(u.thana)}, ${toLocationDisplay(u.district)}, ${toLocationDisplay(u.division)}</small></td>
           <td><small>${u.reportTo || '—'}</small></td>
-          <td>${statusBadge}</td>
+          <td>${statusCell}</td>
           <td><small>${u.createdDate ? u.createdDate.substring(0, 10) : 'N/A'}</small></td>
           <td>
             <div class="action-buttons">
               <button type="button" class="btn-action btn-view" data-id="${u.id}" title="View Details">👁️ View</button>
               <button type="button" class="btn-action btn-edit" data-id="${u.id}" title="Edit User">✏️ Edit</button>
-              <button type="button" class="btn-action btn-status" data-id="${u.id}" title="Toggle Status">
-                ${u.status === 'Active' ? '⏸️ Deactivate' : '▶️ Activate'}
-              </button>
             </div>
           </td>
         </tr>
@@ -2207,23 +2360,57 @@ document.addEventListener('DOMContentLoaded', async () => {
       });
     });
 
-    tbody.querySelectorAll('.btn-status').forEach(btn => {
-      btn.addEventListener('click', async () => {
-        if (btn.disabled) return;
-        const id = btn.getAttribute('data-id');
-        btn.disabled = true;
+    // Super-Admin-only inline status picker (see isSuperAdminViewer above).
+    tbody.querySelectorAll('.status-select').forEach(select => {
+      select.addEventListener('change', async () => {
+        if (select.disabled) return;
+        const id = select.getAttribute('data-id');
+        const newStatus = select.value;
+        select.disabled = true;
         try {
-          await storage.toggleUserStatus(id);
+          await storage.setUserStatus(id, newStatus);
           renderUserTable();
           showToast('User status updated successfully.', 'success');
         } catch (err) {
           showToast(err.message || 'Failed to update status.', 'danger');
-          btn.disabled = false;
+          renderUserTable();
         }
       });
     });
 
+    // Bulk-selection row checkboxes (Super Admin only - see selectCell above). Any
+    // manual toggle exits "all matching filters" mode (see bulkSelectAllMatching doc
+    // comment) - the two selection modes are mutually exclusive.
+    tbody.querySelectorAll('.row-select-checkbox').forEach(cb => {
+      cb.addEventListener('change', () => {
+        bulkSelectAllMatching = false;
+        const id = cb.getAttribute('data-id');
+        if (cb.checked) bulkSelectedCodes.add(id);
+        else bulkSelectedCodes.delete(id);
+        syncSelectAllPageCheckbox();
+        updateBulkActionsBar();
+      });
+    });
+
+    syncSelectAllPageCheckbox();
+    updateBulkActionsBar();
     renderPaginationBar();
+  }
+
+  // Reflects whether every row checkbox on the CURRENT page is checked into the
+  // header "select all on this page" checkbox (checked/indeterminate/unchecked).
+  function syncSelectAllPageCheckbox() {
+    const selectAllCheckbox = document.getElementById('selectAllPageCheckbox');
+    if (!selectAllCheckbox) return;
+    const rowCheckboxes = document.querySelectorAll('#adminUserTableBody .row-select-checkbox');
+    if (rowCheckboxes.length === 0) {
+      selectAllCheckbox.checked = false;
+      selectAllCheckbox.indeterminate = false;
+      return;
+    }
+    const checkedCount = Array.from(rowCheckboxes).filter(cb => cb.checked).length;
+    selectAllCheckbox.checked = checkedCount === rowCheckboxes.length;
+    selectAllCheckbox.indeterminate = checkedCount > 0 && checkedCount < rowCheckboxes.length;
   }
 
   // Renders "« Previous | 1 2 3 ... N | Next »", capping the number of page buttons
@@ -2258,7 +2445,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     ).join('');
 
     pagesContainer.querySelectorAll('button[data-page]').forEach(btn => {
-      btn.addEventListener('click', () => reloadUserTable(parseInt(btn.getAttribute('data-page'), 10)));
+      btn.addEventListener('click', () => reloadUserTable(parseInt(btn.getAttribute('data-page'), 10), false));
     });
   }
 
@@ -2286,7 +2473,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         <img src="${u.userPhoto}" class="user-detail-avatar" alt="Photo" />
         <div>
           <h3>${u.name}</h3>
-          <p class="text-muted">User ID: <strong>${u.id}</strong> | Status: <span class="badge ${u.status === 'Active' ? 'badge-active' : 'badge-inactive'}">${u.status}</span></p>
+          <p class="text-muted">User ID: <strong>${u.id}</strong> | Status: ${userStatusBadge(u.status)}</p>
           <p><strong>Agency:</strong> ${u.agencyName || 'N/A'} | <strong>Campaign:</strong> ${u.campaignName || 'N/A'}</p>
           <p><strong>Designation:</strong> ${u.designation} | <strong>Role:</strong> ${u.role}</p>
         </div>
@@ -2529,7 +2716,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         <td><strong>${u.id}</strong></td>
         <td>${u.name}</td>
         <td>${u.designation}</td>
-        <td>${u.status === 'Active' ? '<span class="badge badge-active">Active</span>' : '<span class="badge badge-inactive">Inactive</span>'}</td>
+        <td>${userStatusBadge(u.status)}</td>
         <td><small>${u.createdDate ? String(u.createdDate).substring(0, 10) : 'N/A'}</small></td>
       </tr>
     `).join('');
@@ -3118,7 +3305,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       u.nidFront ? '[On file - view in app]' : 'N/A',
       u.nidBack ? '[On file - view in app]' : 'N/A',
       u.userPhoto ? '[On file - view in app]' : 'N/A',
-      u.status || 'Active',
+      u.status || 'Submitted',
       u.createdDate || ''
     ];
   }

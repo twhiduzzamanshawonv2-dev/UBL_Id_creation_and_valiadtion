@@ -671,7 +671,9 @@
               <label for="filterStatus">Status</label>
               <select id="filterStatus" class="form-control">
                 <option value="">All Statuses</option>
-                <option value="Active">Active</option>
+                <option value="Created">Created</option>
+                <option value="Submitted">Submitted</option>
+                <option value="Processing">Processing</option>
                 <option value="Inactive">Inactive</option>
               </select>
             </div>
@@ -706,11 +708,33 @@
           </div>
         </div>
 
+        <!-- Bulk Status Change Bar - Super-Admin-only (see SUPER_ADMIN_ONLY_ELEMENT_IDS in
+             js/app.js), and only actually shown once at least one user is selected (either
+             via row checkboxes, or "Select All N matching filters" below, which targets
+             every row matching the CURRENT filters - not just the ones loaded on this page -
+             so a date-range bulk change isn't limited by pagination). -->
+        <div id="bulkActionsBar" class="bulk-actions-bar" style="display:none;">
+          <span id="bulkActionsCount" class="bulk-actions-count">0 selected</span>
+          <button type="button" id="btnSelectAllMatching" class="btn btn-outline btn-sm">Select All <span id="bulkActionsTotal">0</span> Matching Filters</button>
+          <select id="bulkStatusSelect" class="form-control bulk-status-select">
+            <option value="Created">Created</option>
+            <option value="Submitted">Submitted</option>
+            <option value="Processing">Processing</option>
+            <option value="Inactive">Inactive</option>
+          </select>
+          <button type="button" id="btnApplyBulkStatus" class="btn btn-success btn-sm">
+            <span class="btn-spinner" aria-hidden="true"></span>
+            <span class="btn-label">Apply Status</span>
+          </button>
+          <button type="button" id="btnClearBulkSelection" class="btn btn-outline btn-sm">Clear Selection</button>
+        </div>
+
         <!-- Users Table -->
         <div class="table-responsive">
           <table class="data-table">
             <thead>
               <tr>
+                <th id="usersSelectAllTh" style="display:none;"><input type="checkbox" id="selectAllPageCheckbox" title="Select all on this page" /></th>
                 <th>User ID</th>
                 <th>Agency</th>
                 <th>Campaign</th>
