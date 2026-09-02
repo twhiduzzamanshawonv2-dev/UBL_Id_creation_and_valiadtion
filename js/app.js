@@ -22,12 +22,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   let editingUserAgencyId = null;
   let editingUserCampaignId = null;
 
-  // Pending replacement Files for the Edit modal's Super-Admin-only document/photo
-  // re-upload (see index.html's #editNidFieldGroup) - a null entry means "keep the
-  // existing one", separate from activeImageFiles above (the Create form's own state)
-  // so the two forms, if both ever open in the same session, never collide.
-  let editImageFiles = { userPhoto: null, nidFront: null, nidBack: null };
-
   // Auth state (see initAuth() in Section 0 below). Admin Dashboard / System Settings
   // require a logged-in Supabase Auth session; User Registration / Excel Validator stay
   // public. `pendingViewAfterLogin` remembers which admin tab the visitor actually asked
@@ -1200,6 +1194,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     setupImageField('userPhoto', 'userPhotoPreview', 'userPhotoError');
     setupImageField('nidFront', 'nidFrontPreview', 'nidFrontError');
     setupImageField('nidBack', 'nidBackPreview', 'nidBackError');
+
+    // Edit User modal's Super-Admin-only document/photo re-upload - same dropzone widget,
+    // distinct field keys (editUserPhoto/editNidFront/editNidBack) so its
+    // activeImageFiles/activeImageBase64 state never collides with the Add User form's above.
+    setupImageField('editUserPhoto', 'editUserPhotoPreview', 'editUserPhotoError');
+    setupImageField('editNidFront', 'editNidFrontPreview', 'editNidFrontError');
+    setupImageField('editNidBack', 'editNidBackPreview', 'editNidBackError');
   }
 
   function setupImageField(inputId, previewId, errorId) {
@@ -1772,9 +1773,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     syncRoleWithDesignation();
     refreshReportToForDesignation();
 
-    // Reset images
-    activeImageFiles = { userPhoto: null, nidFront: null, nidBack: null };
-    activeImageBase64 = { userPhoto: null, nidFront: null, nidBack: null };
+    // Reset images - only this form's own 3 keys (NOT a full object replace), so the Edit
+    // modal's independent editUserPhoto/editNidFront/editNidBack state (see initImageUploads())
+    // survives untouched if that modal happens to be open at the same time.
+    activeImageFiles.userPhoto = null;
+    activeImageFiles.nidFront = null;
+    activeImageFiles.nidBack = null;
+    activeImageBase64.userPhoto = null;
+    activeImageBase64.nidFront = null;
+    activeImageBase64.nidBack = null;
     ['userPhotoPreview', 'nidFrontPreview', 'nidBackPreview'].forEach(id => {
       const container = document.getElementById(id);
       if (container) container.innerHTML = '';
@@ -2584,9 +2591,22 @@ document.addEventListener('DOMContentLoaded', async () => {
   async function openUserEditModal(id) {
     // Super Admin needs resolved (signed) NID Front/Back + Photo URLs to show the CURRENT
     // document/photo thumbnails in the re-upload section below - an Agency Admin never sees
-    // that section, so it can skip the extra signed-URL round trip and use the already-cached
-    // table row instead (same data getUserDetailWithImages() would return, minus those 2 URLs).
-    const u = storage.isSuperAdmin() ? await storage.getUserDetailWithImages(id) : storage.getUserById(id);
+    // that section, so it can skip the extra round trip and use the already-cached table row
+    // instead. Deliberately NOT storage.getUserDetailWithImages()/getUserById() here for the
+    // Super Admin path: the cached table row's `userPhoto` is ALREADY a signed URL baked in
+    // by resolveUserPhoto() when the table last loaded (1-hour TTL - see
+    // NID_SIGNED_URL_TTL_SECONDS in db-service.js), so reusing it can silently show an
+    // EXPIRED link (broken image) if the table has been open longer than that - unlike
+    // nidFront/nidBack, which are always freshly signed. Fetching a fresh row via
+    // getUserByCode() (raw, unsigned paths) then signing all three through getSignedDocUrls()
+    // guarantees a live link every time this modal opens, regardless of how stale the cache is.
+    let u;
+    if (storage.isSuperAdmin()) {
+      const freshUser = await dbService.getUserByCode(id);
+      u = freshUser ? await dbService.getSignedDocUrls(freshUser) : null;
+    } else {
+      u = storage.getUserById(id);
+    }
     if (!u) return;
 
     editingUserId = id;
@@ -2621,23 +2641,34 @@ document.addEventListener('DOMContentLoaded', async () => {
       const nidErrorEl = document.getElementById('editNidError');
       if (nidErrorEl) nidErrorEl.textContent = '';
 
-      // Documents & Photo re-upload - reset to "no pending replacement" and show the
-      // user's CURRENT image as the thumbnail (see the resolved `u` fetched above).
-      editImageFiles = { userPhoto: null, nidFront: null, nidBack: null };
+      // Documents & Photo re-upload - reset to "no pending replacement" (same
+      // activeImageFiles/activeImageBase64 state the Add User form's setupImageField() uses,
+      // just under these edit-specific keys) and seed each preview with the user's CURRENT
+      // image (see the resolved `u` fetched above) instead of the Add User form's usual
+      // empty-until-chosen preview. Picking a new file overwrites this via the normal
+      // setupImageField() flow; its "Remove" button clears back to empty (not back to the
+      // current image) - acceptable since "no file chosen" already means "keep the current
+      // image" either way when Save runs.
       [
-        ['editUserPhotoThumb', 'editUserPhotoFile', 'editUserPhotoFileError', u.userPhoto],
-        ['editNidFrontThumb', 'editNidFrontFile', 'editNidFrontFileError', u.nidFront],
-        ['editNidBackThumb', 'editNidBackFile', 'editNidBackFileError', u.nidBack]
-      ].forEach(([thumbId, fileId, errorId, currentUrl]) => {
-        const thumbEl = document.getElementById(thumbId);
-        const fileEl = document.getElementById(fileId);
+        ['editUserPhoto', 'editUserPhotoPreview', 'editUserPhotoError', u.userPhoto],
+        ['editNidFront', 'editNidFrontPreview', 'editNidFrontError', u.nidFront],
+        ['editNidBack', 'editNidBackPreview', 'editNidBackError', u.nidBack]
+      ].forEach(([key, previewId, errorId, currentUrl]) => {
+        activeImageFiles[key] = null;
+        activeImageBase64[key] = null;
+        const fileEl = document.getElementById(key);
+        const previewEl = document.getElementById(previewId);
         const errorEl = document.getElementById(errorId);
-        if (thumbEl) {
-          if (currentUrl) thumbEl.src = currentUrl;
-          else thumbEl.removeAttribute('src');
-        }
         if (fileEl) fileEl.value = '';
         if (errorEl) errorEl.textContent = '';
+        if (previewEl) {
+          previewEl.innerHTML = currentUrl
+            ? `<div class="image-preview-card"><img src="${currentUrl}" alt="Current" /></div>`
+            : `<div class="image-preview-card is-empty">
+                <span class="no-image-icon">🚫</span>
+                <div class="preview-info"><span class="file-name">No image on file</span></div>
+              </div>`;
+        }
       });
     }
 
@@ -2646,6 +2677,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     editDesSelect.innerHTML = '';
     storage.getDesignations().forEach(d => {
       editDesSelect.innerHTML += `<option value="${d}" ${d === u.designation ? 'selected' : ''}>${d}</option>`;
+    });
+
+    // Role's <option> list must exist BEFORE refreshEditReportToOptions() tries to set its
+    // .value below - assigning `select.value` to something with no matching <option> is a
+    // silent no-op in the DOM (the select is left at "", not at the assigned value), which
+    // was causing every save to fail with "Role must match Designation." even though Role
+    // visually showed the right designation (the disabled <select> was rendering its own
+    // placeholder styling, not an actual selected option).
+    const editRoleSelect = document.getElementById('editRole');
+    editRoleSelect.innerHTML = '';
+    storage.getRoles().forEach(r => {
+      editRoleSelect.innerHTML += `<option value="${r}">${r}</option>`;
     });
 
     // Role always mirrors Designation, and Report To options are rebuilt for it (editingUserId
@@ -3839,42 +3882,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       });
     }
 
-    // Documents & Photo re-upload (Super-Admin-only, see index.html's #editNidFieldGroup) -
-    // picking a file just stages it in editImageFiles + swaps the thumbnail to a local
-    // preview; the actual Storage upload only happens on Save (see btnSaveEdit below), so
-    // choosing then closing the modal without saving never uploads anything.
-    [
-      ['editUserPhotoFile', 'editUserPhotoThumb', 'editUserPhotoFileError', 'userPhoto'],
-      ['editNidFrontFile', 'editNidFrontThumb', 'editNidFrontFileError', 'nidFront'],
-      ['editNidBackFile', 'editNidBackThumb', 'editNidBackFileError', 'nidBack']
-    ].forEach(([fileId, thumbId, errorId, key]) => {
-      const fileEl = document.getElementById(fileId);
-      const thumbEl = document.getElementById(thumbId);
-      const errorEl = document.getElementById(errorId);
-      if (!fileEl) return;
-
-      fileEl.addEventListener('change', () => {
-        const file = fileEl.files[0];
-        if (errorEl) errorEl.textContent = '';
-
-        if (!file) {
-          editImageFiles[key] = null;
-          return;
-        }
-
-        const validation = validateImageFile(file, 5);
-        if (!validation.valid) {
-          if (errorEl) errorEl.textContent = validation.message;
-          fileEl.value = '';
-          editImageFiles[key] = null;
-          return;
-        }
-
-        editImageFiles[key] = file;
-        if (thumbEl) thumbEl.src = URL.createObjectURL(file);
-      });
-    });
-
     if (btnSaveEdit) {
       btnSaveEdit.addEventListener('click', async () => {
         if (!editingUserId || btnSaveEdit.disabled) return;
@@ -3986,18 +3993,20 @@ document.addEventListener('DOMContentLoaded', async () => {
         btnSaveEdit.disabled = true;
         try {
           // Documents & Photo re-upload (Super-Admin-only) - only actually uploads a file the
-          // admin just picked (editImageFiles[key] is null for anything left untouched, so
-          // that user's existing document/photo is simply never included in the patch below).
+          // admin just picked via the dropzone (activeImageFiles[key] is null for anything left
+          // untouched, so that user's existing document/photo is simply never included in the
+          // patch below). Same activeImageFiles state the Add User form's setupImageField()
+          // writes to, just under the editUserPhoto/editNidFront/editNidBack keys.
           if (editingNidField) {
             const [userPhotoUrl, nidFrontUrl, nidBackUrl] = await Promise.all([
-              editImageFiles.userPhoto
-                ? dbService.uploadImage('user-photos', editingUserId, 'photo', editImageFiles.userPhoto)
+              activeImageFiles.editUserPhoto
+                ? dbService.uploadImage('user-photos', editingUserId, 'photo', activeImageFiles.editUserPhoto)
                 : Promise.resolve(undefined),
-              editImageFiles.nidFront
-                ? dbService.uploadImage('nid-documents', editingUserId, 'nidFront', editImageFiles.nidFront)
+              activeImageFiles.editNidFront
+                ? dbService.uploadImage('nid-documents', editingUserId, 'nidFront', activeImageFiles.editNidFront)
                 : Promise.resolve(undefined),
-              editImageFiles.nidBack
-                ? dbService.uploadImage('nid-documents', editingUserId, 'nidBack', editImageFiles.nidBack)
+              activeImageFiles.editNidBack
+                ? dbService.uploadImage('nid-documents', editingUserId, 'nidBack', activeImageFiles.editNidBack)
                 : Promise.resolve(undefined)
             ]);
             extraFields = {

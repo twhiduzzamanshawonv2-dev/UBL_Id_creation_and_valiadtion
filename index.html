@@ -1738,36 +1738,71 @@
           </div>
 
           <!-- Documents & Photo re-upload - Super-Admin-only, always optional (leaving a
-               file input empty keeps that user's existing document/photo unchanged). See
+               dropzone untouched keeps that user's existing document/photo unchanged). Same
+               upload widget (drag & drop / browse / paste) as the Add User form's own User
+               Photo / NID Front / NID Back fields - wired via the same setupImageField()
+               helper in js/app.js's initImageUploads(), just with these `edit*` ids so its
+               state never collides with the Add User form's. Each preview starts seeded with
+               the CURRENT image (see openUserEditModal()) rather than empty. See
                js/app.js openUserEditModal()/btnSaveEdit for the upload + save wiring, and
                trg_enforce_agency_admin_edit_window in supabase/schema.sql for why an
                Agency Admin could never submit these even if this markup were exposed to them. -->
           <div class="field-group mb-3">
-            <label>User Photo</label>
-            <div class="edit-doc-thumb-row">
-              <img id="editUserPhotoThumb" class="edit-doc-thumb" alt="Current User Photo" />
-              <input type="file" id="editUserPhotoFile" accept="image/*" class="form-control" />
+            <label for="editUserPhoto">User Photo</label>
+            <div class="edit-photo-row">
+              <div id="editUserPhotoPreview" class="preview-container"></div>
+              <div class="upload-dropzone" tabindex="0">
+                <input type="file" id="editUserPhoto" class="file-input-native"
+                  accept="image/png, image/jpeg, image/jpg" />
+                <div class="dropzone-content">
+                  <span class="upload-icon">📷</span>
+                  <p class="dropzone-text">Drag your photo here to start uploading.</p>
+                  <div class="dropzone-divider"><span>OR</span></div>
+                  <button type="button" class="btn-browse-files">Browse files</button>
+                  <div class="field-hint">JPG, JPEG, PNG (Max 5MB) - leave untouched to keep the current photo</div>
+                  <div class="field-hint paste-hint">Or click here and press Ctrl+V (Cmd+V on Mac) to paste a copied image</div>
+                </div>
+              </div>
             </div>
-            <span class="field-hint">Leave empty to keep the current photo</span>
-            <span class="error-message" id="editUserPhotoFileError"></span>
+            <span class="error-message" id="editUserPhotoError"></span>
           </div>
           <div class="field-group mb-3">
-            <label>NID Front Side Image</label>
-            <div class="edit-doc-thumb-row">
-              <img id="editNidFrontThumb" class="edit-doc-thumb" alt="Current NID Front" />
-              <input type="file" id="editNidFrontFile" accept="image/*" class="form-control" />
+            <label for="editNidFront">NID Front Side Image</label>
+            <div class="edit-photo-row">
+              <div id="editNidFrontPreview" class="preview-container"></div>
+              <div class="upload-dropzone" tabindex="0">
+                <input type="file" id="editNidFront" class="file-input-native"
+                  accept="image/png, image/jpeg, image/jpg" />
+                <div class="dropzone-content">
+                  <span class="upload-icon">🆔</span>
+                  <p class="dropzone-text">Drag your NID front side photo here to start uploading.</p>
+                  <div class="dropzone-divider"><span>OR</span></div>
+                  <button type="button" class="btn-browse-files">Browse files</button>
+                  <div class="field-hint">JPG, JPEG, PNG (Max 5MB) - leave untouched to keep the current image</div>
+                  <div class="field-hint paste-hint">Or click here and press Ctrl+V (Cmd+V on Mac) to paste a copied image</div>
+                </div>
+              </div>
             </div>
-            <span class="field-hint">Leave empty to keep the current image</span>
-            <span class="error-message" id="editNidFrontFileError"></span>
+            <span class="error-message" id="editNidFrontError"></span>
           </div>
           <div class="field-group mb-3">
-            <label>NID Back Side Image</label>
-            <div class="edit-doc-thumb-row">
-              <img id="editNidBackThumb" class="edit-doc-thumb" alt="Current NID Back" />
-              <input type="file" id="editNidBackFile" accept="image/*" class="form-control" />
+            <label for="editNidBack">NID Back Side Image</label>
+            <div class="edit-photo-row">
+              <div id="editNidBackPreview" class="preview-container"></div>
+              <div class="upload-dropzone" tabindex="0">
+                <input type="file" id="editNidBack" class="file-input-native"
+                  accept="image/png, image/jpeg, image/jpg" />
+                <div class="dropzone-content">
+                  <span class="upload-icon">📄</span>
+                  <p class="dropzone-text">Drag your NID back side photo here to start uploading.</p>
+                  <div class="dropzone-divider"><span>OR</span></div>
+                  <button type="button" class="btn-browse-files">Browse files</button>
+                  <div class="field-hint">JPG, JPEG, PNG (Max 5MB) - leave untouched to keep the current image</div>
+                  <div class="field-hint paste-hint">Or click here and press Ctrl+V (Cmd+V on Mac) to paste a copied image</div>
+                </div>
+              </div>
             </div>
-            <span class="field-hint">Leave empty to keep the current image</span>
-            <span class="error-message" id="editNidBackFileError"></span>
+            <span class="error-message" id="editNidBackError"></span>
           </div>
         </div>
       </div>

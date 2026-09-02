@@ -1329,31 +1329,111 @@ label {
   margin-right: 0.25rem;
 }
 
+/* Edit User modal's Super-Admin-only photo/NID re-upload - the current image preview sits to
+   the LEFT of the upload dropzone. Only LAYOUT (side-by-side, preview width) is overridden
+   here - the dropzone itself keeps the exact same size/styling as the Add User form's own
+   (.upload-dropzone's rules apply unchanged, just inside a narrower flex column). */
+.edit-photo-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.85rem;
+}
+
+.edit-photo-row .preview-container {
+  flex: 0 0 150px;
+  width: 150px;
+  height: 150px;
+  margin-top: 0;
+}
+
+.edit-photo-row .image-preview-card {
+  display: block;
+  height: 100%;
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
+}
+
+.edit-photo-row .image-preview-card img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: var(--radius-md);
+}
+
+.edit-photo-row .upload-dropzone {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 150px;
+  box-sizing: border-box;
+  padding: 1rem 0.85rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.edit-photo-row .dropzone-content {
+  gap: 0.3rem;
+}
+
+.edit-photo-row .upload-icon {
+  width: 38px;
+  height: 38px;
+  font-size: 1.15rem;
+  margin-bottom: 0;
+}
+
+.edit-photo-row .dropzone-text {
+  font-size: 0.8rem;
+}
+
+.edit-photo-row .dropzone-divider {
+  margin: 0.1rem 0;
+}
+
+.edit-photo-row .btn-browse-files {
+  padding: 0.4rem 1.1rem;
+  font-size: 0.8rem;
+}
+
+.edit-photo-row .field-hint {
+  font-size: 0.7rem;
+}
+
+/* "No image on file" empty-state placeholder (see openUserEditModal() in js/app.js) - the
+   base .image-preview-card is built around showing a picked/current image, not an explicit
+   "nothing here" state, so this needs its own look. */
+.image-preview-card.is-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  height: 100%;
+  min-height: 96px;
+  background: var(--bg-main);
+  border: 1px dashed var(--border-color);
+  box-shadow: none;
+}
+
+.no-image-icon {
+  font-size: 1.5rem;
+  opacity: 0.5;
+}
+
+.image-preview-card.is-empty .file-name {
+  color: var(--text-muted);
+  font-weight: 600;
+  font-size: 0.75rem;
+  text-align: center;
+}
+
 .bulk-status-select {
   width: auto;
   padding: 0.35rem 0.6rem;
 }
 
-/* Edit User modal - Super-Admin-only document/photo re-upload. */
-.edit-doc-thumb-row {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-}
-
-.edit-doc-thumb {
-  width: 56px;
-  height: 56px;
-  object-fit: cover;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border-color);
-  background: var(--bg-card);
-  flex-shrink: 0;
-}
-
-.edit-doc-thumb:not([src]) {
-  visibility: hidden;
-}
 
 .btn-action {
   padding: 0.35rem 0.6rem;
