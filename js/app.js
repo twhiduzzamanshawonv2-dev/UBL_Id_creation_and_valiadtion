@@ -2313,6 +2313,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         ? `<td><input type="checkbox" class="row-select-checkbox" data-id="${u.id}" ${isChecked ? 'checked' : ''} /></td>`
         : '';
 
+      // Agency Admin's "edit window": can only edit a user while it's still
+      // 'Submitted' - once Super Admin moves it on (Processing/Created/Inactive),
+      // editing locks. Super Admin itself is never restricted. Real enforcement is
+      // trg_enforce_agency_admin_edit_window in supabase/schema.sql - this is only
+      // the matching UI convenience (disabled button + explanatory tooltip).
+      const canEdit = isSuperAdminViewer || u.status === 'Submitted';
+
       return `
         <tr>
           ${selectCell}
@@ -2338,7 +2345,8 @@ document.addEventListener('DOMContentLoaded', async () => {
           <td>
             <div class="action-buttons">
               <button type="button" class="btn-action btn-view" data-id="${u.id}" title="View Details">👁️ View</button>
-              <button type="button" class="btn-action btn-edit" data-id="${u.id}" title="Edit User">✏️ Edit</button>
+              <button type="button" class="btn-action btn-edit" data-id="${u.id}" ${canEdit ? '' : 'disabled'}
+                title="${canEdit ? 'Edit User' : 'Locked - only Super Admin can edit a user once its status has moved past Submitted.'}">✏️ Edit</button>
             </div>
           </td>
         </tr>
@@ -2355,6 +2363,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     tbody.querySelectorAll('.btn-edit').forEach(btn => {
       btn.addEventListener('click', async () => {
+        if (btn.disabled) return;
         const id = btn.getAttribute('data-id');
         await openUserEditModal(id);
       });
