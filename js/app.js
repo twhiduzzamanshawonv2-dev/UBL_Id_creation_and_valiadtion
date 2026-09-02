@@ -2588,22 +2588,28 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('editName').value = u.name;
     document.getElementById('editMobile').value = u.mobile;
 
-    // Super-Admin-only fields (email/gender/father's & mother's name/DOB/NID) - a scoped
-    // Agency Admin never sees this block, so it's never populated (or submittable) for them.
-    const superAdminFieldsGroup = document.getElementById('editSuperAdminFields');
+    // Contact + Personal Details (email/gender/father's & mother's name/DOB) - editable by
+    // BOTH Super Admin and Agency Admin, always populated/shown (see index.html's Edit modal
+    // comment for why no extra gating is needed here).
+    document.getElementById('editEmail').value = u.email || '';
+    document.getElementById('editGender').value = u.gender || '';
+    document.getElementById('editFatherName').value = u.fatherName || '';
+    document.getElementById('editMotherName').value = u.motherName || '';
+    document.getElementById('editDob').value = u.dob || '';
+    ['editEmailError', 'editGenderError', 'editFatherNameError', 'editMotherNameError', 'editDobError']
+      .forEach(id => { const el = document.getElementById(id); if (el) el.textContent = ''; });
+
+    // NID Number stays Super-Admin-only - a scoped Agency Admin never sees this group, so
+    // it's never populated (or submittable) for them.
+    const nidFieldGroup = document.getElementById('editNidFieldGroup');
     const isSuperAdminEditor = storage.isSuperAdmin();
-    if (superAdminFieldsGroup) {
-      superAdminFieldsGroup.style.display = isSuperAdminEditor ? 'block' : 'none';
+    if (nidFieldGroup) {
+      nidFieldGroup.style.display = isSuperAdminEditor ? 'block' : 'none';
     }
     if (isSuperAdminEditor) {
-      document.getElementById('editEmail').value = u.email || '';
-      document.getElementById('editGender').value = u.gender || '';
-      document.getElementById('editFatherName').value = u.fatherName || '';
-      document.getElementById('editMotherName').value = u.motherName || '';
-      document.getElementById('editDob').value = u.dob || '';
       document.getElementById('editNid').value = u.nid || '';
-      ['editEmailError', 'editGenderError', 'editFatherNameError', 'editMotherNameError', 'editDobError', 'editNidError']
-        .forEach(id => { const el = document.getElementById(id); if (el) el.textContent = ''; });
+      const nidErrorEl = document.getElementById('editNidError');
+      if (nidErrorEl) nidErrorEl.textContent = '';
     }
 
     // Designations
@@ -3827,47 +3833,52 @@ document.addEventListener('DOMContentLoaded', async () => {
           return;
         }
 
-        // Super-Admin-only extra fields (email/gender/father's & mother's name/DOB/NID) - only
-        // read/validated/submitted when the block is actually visible (Super Admin editor),
-        // so a scoped Agency Admin's save can never touch them either way.
-        const superAdminFieldsGroup = document.getElementById('editSuperAdminFields');
-        const editingSuperAdminFields = !!superAdminFieldsGroup && superAdminFieldsGroup.style.display !== 'none';
-        let extraFields = null;
+        // Contact + Personal Details (email/gender/father's & mother's name/DOB) - editable
+        // by BOTH Super Admin and Agency Admin, so always read/validated/submitted (these
+        // fields are always shown in the Edit modal - see openUserEditModal()).
+        const updatedEmail = document.getElementById('editEmail').value.trim();
+        const updatedGender = document.getElementById('editGender').value;
+        const updatedFatherName = document.getElementById('editFatherName').value;
+        const updatedMotherName = document.getElementById('editMotherName').value;
+        const updatedDob = document.getElementById('editDob').value;
 
-        if (editingSuperAdminFields) {
-          const updatedEmail = document.getElementById('editEmail').value.trim();
-          const updatedGender = document.getElementById('editGender').value;
-          const updatedFatherName = document.getElementById('editFatherName').value;
-          const updatedMotherName = document.getElementById('editMotherName').value;
-          const updatedDob = document.getElementById('editDob').value;
+        const eCheck = validateEmail(updatedEmail);
+        if (!eCheck.valid) { alert(eCheck.message); return; }
+
+        if (!updatedGender) { alert('Please select Gender.'); return; }
+
+        const fCheck = validateName(updatedFatherName, "Father's Name");
+        if (!fCheck.valid) { alert(fCheck.message); return; }
+
+        const moCheck = validateName(updatedMotherName, "Mother's Name");
+        if (!moCheck.valid) { alert(moCheck.message); return; }
+
+        const ageCheck = validateMinimumAge(updatedDob);
+        if (!ageCheck.valid) { alert(ageCheck.message); return; }
+
+        document.getElementById('editFatherName').value = updatedFatherName;
+        document.getElementById('editMotherName').value = updatedMotherName;
+
+        let extraFields = {
+          email: eCheck.cleanValue || updatedEmail,
+          gender: updatedGender,
+          fatherName: fCheck.cleanValue,
+          motherName: moCheck.cleanValue,
+          dob: updatedDob
+        };
+
+        // NID Number stays Super-Admin-only - only read/validated/submitted when that group
+        // is actually visible, so a scoped Agency Admin's save can never touch it either way.
+        const nidFieldGroup = document.getElementById('editNidFieldGroup');
+        const editingNidField = !!nidFieldGroup && nidFieldGroup.style.display !== 'none';
+
+        if (editingNidField) {
           const updatedNid = document.getElementById('editNid').value.trim();
-
-          const eCheck = validateEmail(updatedEmail);
-          if (!eCheck.valid) { alert(eCheck.message); return; }
-
-          if (!updatedGender) { alert('Please select Gender.'); return; }
-
-          const fCheck = validateName(updatedFatherName, "Father's Name");
-          if (!fCheck.valid) { alert(fCheck.message); return; }
-
-          const moCheck = validateName(updatedMotherName, "Mother's Name");
-          if (!moCheck.valid) { alert(moCheck.message); return; }
-
-          const ageCheck = validateMinimumAge(updatedDob);
-          if (!ageCheck.valid) { alert(ageCheck.message); return; }
-
           const nidCheck = validateNID(updatedNid);
           if (!nidCheck.valid) { alert(nidCheck.message); return; }
 
-          document.getElementById('editFatherName').value = updatedFatherName;
-          document.getElementById('editMotherName').value = updatedMotherName;
-
           extraFields = {
-            email: eCheck.cleanValue || updatedEmail,
-            gender: updatedGender,
-            fatherName: fCheck.cleanValue,
-            motherName: moCheck.cleanValue,
-            dob: updatedDob,
+            ...extraFields,
             nid: nidCheck.cleanValue
           };
         }
