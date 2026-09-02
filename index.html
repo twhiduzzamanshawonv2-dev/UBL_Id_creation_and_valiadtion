@@ -575,12 +575,13 @@
 
           <!-- Every field-group below carries an explicit `order` matching the SUPER ADMIN
                sequence (Search, Agency, Campaign, Division, District, Upazila, Thana,
-               Designation, Role, Status, From Date, To Date). Thana/Role are physically
-               placed here (right after Search) only so they're easy to find in this file -
-               CSS grid `order` is what actually decides on-screen position, which is why an
-               Agency Admin (who only ever sees Search/Thana/Role - everything else in this
-               bar is Super-Admin-only) still sees them fall in a sensible 1-2-3 order
-               without any separate per-role markup or JS. -->
+               Designation, Role, Status, From Date, To Date). Thana/Role/Status/From Date/To
+               Date are physically placed here (right after Search) only so they're easy to
+               find in this file - CSS grid `order` is what actually decides on-screen
+               position, which is why an Agency Admin (who sees Search/Thana/Role/Status/Dates -
+               only Agency/Campaign/Division/District/Upazila/Designation/Export stay
+               Super-Admin-only) still sees them fall in a sensible order without any separate
+               per-role markup or JS. -->
 
           <!-- Global Search Input -->
           <div class="field-group" style="order: 1;">
@@ -626,13 +627,42 @@
             </div>
           </div>
 
-          <!-- Division/District/Upazila/Designation/Status/Date filters and the Export
-               button - Super-Admin-only (an agency_admin account only ever manages its own
-               single Agency+Campaign, so this granular slicing plus a bulk export isn't
-               offered there; Search Keywords/Thana/Role/Clear Filters/Refresh from Sheet
-               remain available to every role). Wrapped so js/app.js can toggle the whole
-               group in one call - "display: contents" keeps every field a direct grid item
-               of .filter-bar-grid (same trick as usersAgencyCampaignFilterGroup above). -->
+          <!-- Status Filter - available to every role (see Thana/Role above): an agency_admin
+               can still filter its own users by workflow status even without the rest of the
+               Super-Admin-only slicing below. -->
+          <div class="field-group" style="order: 10;">
+            <label for="filterStatus">Status</label>
+            <select id="filterStatus" class="form-control">
+              <option value="">All Statuses</option>
+              <option value="Created">Created</option>
+              <option value="Submitted">Submitted</option>
+              <option value="Processing">Processing</option>
+              <option value="Inactive">Inactive</option>
+            </select>
+          </div>
+
+          <!-- From/To Date Filters (by Created Date) - available to every role (see Status
+               above). -->
+          <div class="field-group" style="order: 11;">
+            <label for="filterFromDate"
+              data-tooltip="Filters by Created Date - only users created on or after this date.">From Date</label>
+            <input type="date" id="filterFromDate" class="form-control" />
+          </div>
+
+          <div class="field-group" style="order: 12;">
+            <label for="filterToDate"
+              data-tooltip="Filters by Created Date - only users created on or before this date.">To Date</label>
+            <input type="date" id="filterToDate" class="form-control" />
+          </div>
+
+          <!-- Division/District/Upazila/Designation filters and the Export button -
+               Super-Admin-only (an agency_admin account only ever manages its own single
+               Agency+Campaign, so this granular location/designation slicing plus a bulk
+               export isn't offered there; Search Keywords/Thana/Role/Status/Dates/Clear
+               Filters/Refresh from Sheet remain available to every role). Wrapped so js/app.js
+               can toggle the whole group in one call - "display: contents" keeps every field
+               a direct grid item of .filter-bar-grid (same trick as
+               usersAgencyCampaignFilterGroup above). -->
           <div id="usersAdvancedFilterGroup" class="agency-campaign-filter-group">
             <!-- Division Filter -->
             <div class="field-group" style="order: 4;">
@@ -664,32 +694,6 @@
               <select id="filterDesignation" class="form-control">
                 <option value="">All Designations</option>
               </select>
-            </div>
-
-            <!-- Status Filter -->
-            <div class="field-group" style="order: 10;">
-              <label for="filterStatus">Status</label>
-              <select id="filterStatus" class="form-control">
-                <option value="">All Statuses</option>
-                <option value="Created">Created</option>
-                <option value="Submitted">Submitted</option>
-                <option value="Processing">Processing</option>
-                <option value="Inactive">Inactive</option>
-              </select>
-            </div>
-
-            <!-- From Date Filter (by Created Date) -->
-            <div class="field-group" style="order: 11;">
-              <label for="filterFromDate"
-                data-tooltip="Filters by Created Date - only users created on or after this date.">From Date</label>
-              <input type="date" id="filterFromDate" class="form-control" />
-            </div>
-
-            <!-- To Date Filter (by Created Date) -->
-            <div class="field-group" style="order: 12;">
-              <label for="filterToDate"
-                data-tooltip="Filters by Created Date - only users created on or before this date.">To Date</label>
-              <input type="date" id="filterToDate" class="form-control" />
             </div>
           </div>
 

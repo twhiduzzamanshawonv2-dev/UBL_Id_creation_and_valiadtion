@@ -1452,6 +1452,18 @@ label {
   border-color: var(--primary);
 }
 
+/* A disabled Edit button (see renderUserTable()'s `canEdit`) must look and behave inert -
+   without this, :hover above still fires on mouseover even though the button does nothing
+   (disabled short-circuits the click handler, not the CSS :hover pseudo-class). */
+.btn-action:disabled,
+.btn-action:disabled:hover {
+  background: var(--bg-card);
+  color: inherit;
+  border-color: var(--border-color);
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .btn-action.btn-delete:hover {
   background: var(--danger);
   color: #ffffff;
